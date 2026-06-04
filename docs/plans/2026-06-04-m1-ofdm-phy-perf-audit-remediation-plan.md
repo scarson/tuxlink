@@ -168,6 +168,28 @@ BEFORE starting work:
    output, which you should sanity-check once).
 ```
 
+**Golden-capture mechanism — PINNED (one mechanism for every "add a
+golden" guard in this plan).** Wherever a task says "pin a golden" /
+"golden sample vector" / "golden LLR", use EXACTLY this: capture the
+output as an exact `[f32; N]` literal hard-coded in the test (or, if N is
+large, a small committed fixture file), and compare at **tolerance 0.0
+(bit/float-exact equality)**. These are lossless refactors — the output
+must be bit-identical, so an exact comparison is correct and is the
+red/green signal. Do NOT use a hash, a "byte-identical" byte compare, a
+"first-N-samples" heuristic, or an approximate tolerance for these
+guards; those phrasings elsewhere in this plan all mean this one
+mechanism. (The pre-existing `< 1e-6` preamble pins referenced in Task 7
+are existing tests, not new goldens, and are left as-is.)
+
+**Why ADD these guards (existing tests are too weak).** The crate has
+~22 integration test files, NOT a thin suite — but their assertions are
+weak: sign/length-only (`constellations_llr`), clean-channel roundtrip
+only (`floor_narrow_fsk`), ±tolerance (`sync_preamble` ±32,
+`audio_io` 1e-4). None would catch the silent numerical drift these
+optimizations risk. So the bit-exact behavior-pinning guards MUST be
+ADDED first as the TDD red step — this STRENGTHENS the existing
+verification mandate, it does not replace or weaken it.
+
 ```
 BEFORE marking this task complete:
 1. POST-CHANGE demonstration: re-run the baseline measurement (or
@@ -220,11 +242,20 @@ keep it in this phase for cohesion.
 
 **Execution Status:** ⬜ NOT STARTED
 
-**What / where / why.** Today `WidebandLowDensityFloor::transmit_multi`
-(`robustness_floor/wideband_lowdensity.rs:233-235`) and `receive_multi`
-(`:334-338` via `decode_symbol_bytes` at `:173-176`) call
-`OfdmTransmitter::new` / `OfdmReceiver::new` **inside the per-symbol
-loop**, and those constructors and the symbol bodies in turn rebuild
+**What / where / why.** Today `WidebandLowDensityFloor::transmit_multi`'s
+per-symbol loop (`robustness_floor/wideband_lowdensity.rs:233-235`) and
+`receive_multi`'s per-symbol loop (`:334-338`) call
+`OfdmTransmitter::new` / `OfdmReceiver::new` **one call-frame down from
+the loop** — the constructors themselves are NOT at the loop lines:
+- TX: the loop at `:234` calls `self.transmit(chunk)`, and
+  `OfdmTransmitter::new` is at **`:71` inside `transmit`**.
+- RX: the loop at `:336` (and the first-symbol path) calls
+  `self.decode_symbol_bytes(...)`, and `OfdmReceiver::new` is at
+  **`:175` inside `decode_symbol_bytes`**.
+
+A subagent navigating to `:233`/`:334` finds the loops, not the
+constructors — go to `:71`/`:175` for the actual `::new` call sites.
+Those constructors and the symbol bodies in turn rebuild
 frame-invariant state every symbol (FFT planner, equalizer, pilot
 `HashSet`, mappers, index vectors). All of that is a pure function of
 the immutable `OfdmParams`. This task introduces the container that
@@ -237,6 +268,9 @@ establishes the seam.
   added by Tasks 2–4,7 */ }` with `OfdmContext::new(params: &'a
   OfdmParams) -> Self` that does the build-once work (initially just
   stores `params`).
+- Register the new module: add `pub mod context;` (or `mod context;` +
+  a re-export) in `ofdm_main/mod.rs` so the module compiles and is
+  reachable.
 - Change `decode_symbol_bytes` and `transmit_multi`'s loop so the
   context is built ONCE before the loop and borrowed inside it. The
   per-symbol `OfdmReceiver::new`/`OfdmTransmitter::new` calls move out
@@ -261,10 +295,12 @@ note). Record it.
 `transmit_multi`/`receive_multi` call (constructor hoisted out of the
 loop). State this in notes.
 **Correctness guard (add):** a test asserting `transmit_multi` output
-is byte-identical before/after by pinning a golden sample vector for a
+is bit-identical before/after by pinning a golden sample vector for a
 fixed payload (e.g. `b"GOLDEN-CTX"`) — capture the current
-`transmit_multi(b"GOLDEN-CTX")` output hash/first-N samples, assert it
-unchanged. Existing `multi_roundtrip_*` already guard end-to-end; this
+`transmit_multi(b"GOLDEN-CTX")` output as an exact `[f32; N]` literal
+(tolerance 0.0; see the pinned golden-capture mechanism in the per-task
+preamble) and assert it unchanged. Existing `multi_roundtrip_*` already
+guard end-to-end; this
 golden pins the TX waveform exactly. (Guard MUST be added — the crate's
 suite has roundtrips but no waveform-golden.)
 
@@ -440,16 +476,25 @@ subcarrier vec into a fresh `Vec` **every call**; it is called per
 symbol on the TX/RX paths (`wideband_lowdensity.rs:63,165`). The result
 is frame-invariant.
 
-**Minimum change:** compute `data_indices` once in
-`OfdmParams::for_mode` and store it as a field
-(`data_indices: Vec<usize>`); change the accessor to return `&[usize]`
-(or keep returning `Vec` by cloning the cached field if callers require
-ownership — prefer changing callers to take the slice; check
-`data_indices().len()` call sites, which only need the length). Keep
-the computed set identical to today's filter result.
+**Minimum change (PRESERVE the public signature — do NOT break the
+public API):**
+- Add a private memoized field on `OfdmParams`
+  (`data_indices: Vec<usize>`) populated once in `OfdmParams::for_mode`
+  with today's pilot-filter result.
+- KEEP the public `pub fn data_indices(&self) -> Vec<usize>` signature
+  intact — it returns a clone of the cached field (or stays as-is). This
+  avoids breaking the public PHY API and the external caller
+  `tests/ofdm_tx.rs:11`.
+- Add a private `data_indices_ref(&self) -> &[usize]` accessor for the
+  internal per-symbol callers (`wideband_lowdensity.rs:63`, `:166`),
+  which only need `.len()`/iteration — they can read the slice with no
+  per-call allocation. (`tests/ofdm_tx.rs:11` keeps calling the public
+  `Vec`-returning method; verify it still compiles.)
+- Keep the computed set identical to today's filter result.
 
-**Do NOT** change the pilot/data partition logic. This is a pure
-memoization — same values, computed once.
+**Do NOT** change the pilot/data partition logic, and do NOT change the
+public `data_indices() -> Vec<usize>` signature. This is a pure
+memoization — same values, computed once, public API preserved.
 
 **Baseline:** count `data_indices()` calls per `transmit_multi` /
 `receive_multi` (1 per `transmit`/`decode_symbol_bytes` → per symbol);
@@ -580,26 +625,51 @@ path doesn't meet the project's own bar. **SB3:** `acc_cb.lock().
 unwrap()` panics the RT thread if a consumer panicked while holding the
 lock (mutex poisoning) → stream abort; the lock-free fix removes this.
 
-**Minimum change — choose the no-dep variant unless the operator
-approves a dep:**
-- **Preferred (no new dependency):** a callback-owned staging buffer +
-  an `AtomicUsize` write-progress counter. The callback writes captured
-  samples into a preallocated `Vec<f32>` (sized `target_samples`,
-  owned solely by the callback via `move`) and publishes progress with
-  `count.store(written, Ordering::Release)`. The consumer reads
-  `count.load(Ordering::Acquire)` to learn how many samples are ready —
-  it NEVER takes the callback's buffer until the stream is dropped.
-  After `drop(stream)`, the consumer takes ownership of the staging
-  buffer (e.g. via an `Arc<Mutex<>>` swapped only at teardown, or by
-  moving it out through a `oneshot`/`mpsc` send on completion). The hot
-  path has zero lock acquisition.
-- **Alternative (if a dep is approved):** an SPSC ring (`rtrb` or
-  `ringbuf`). Weigh the dep cost — note the project's preference for
-  minimal deps; default to the no-dep atomic-progress design.
+**Minimum change — the design has two paths; the executor MUST pick one
+and SURFACE the choice before proceeding (the Primary path is a
+deliberate new-dependency decision that requires explicit operator
+approval):**
 
-The strict single-producer (callback) / single-consumer (poll loop)
-invariant MUST be documented in a comment and is what makes the
-unsynchronized staging buffer + atomic counter sound.
+- **Primary (real SPSC ring buffer — REQUIRES a new-dependency
+  decision):** an `rtrb` or `ringbuf` SPSC ring. The callback is the
+  sole producer (`producer.push_slice(...)` / equivalent); the poll-loop
+  consumer is the sole consumer (`consumer.pop_slice(...)`). This is the
+  cleanest, fully-safe path — no `unsafe` in user code. **It adds a new
+  crate dependency**, and the project prefers minimal deps, so this is a
+  deliberate decision the executor MUST call out and get the operator to
+  approve **before writing any code on this path.** Do not silently pull
+  in the dep; surface it as a decision, justify it (RT-safe lock-free
+  capture with no hand-rolled `unsafe`), and wait for sign-off.
+
+- **Alternative (no-dep, `unsafe`):** a `UnsafeCell<Box<[f32]>>` staging
+  buffer (sized `target_samples`) published via an `AtomicUsize` length.
+  The callback (producer) writes captured samples into the cells and
+  publishes the new count with `len.store(written, Ordering::Release)`;
+  the consumer reads `len.load(Ordering::Acquire)` to learn how many
+  samples are valid, then reads only that many. The `Release`/`Acquire`
+  pairing is what makes the prior writes visible to the consumer. **This
+  path is `unsafe`** (the `UnsafeCell` access bypasses the borrow
+  checker): it REQUIRES a safety-invariant comment justifying soundness —
+  specifically that the strict single-producer (callback) /
+  single-consumer (poll loop) discipline plus the Release/Acquire fence
+  means no two threads ever access the same cell concurrently, and the
+  consumer only reads indices `< len.load(Acquire)`. Without that comment
+  + the ordering discipline, the path is a latent data race and MUST NOT
+  ship.
+
+**Post-`drop(stream)` ownership handoff — a HARD constraint on BOTH
+paths.** The current teardown reads the captured length on the timeout
+path (`audio_device.rs:583`), takes sole ownership of the buffer via
+`Arc::try_unwrap` after the stream is dropped (`:591`), and truncates to
+`target_samples` for a Completed outcome (`:599`). The chosen design
+MUST preserve this exact post-drop handoff: the consumer takes ownership
+of the captured samples ONLY after `drop(stream)` (when the callback can
+no longer run, so there is no live producer), and the timeout path must
+still be able to read the current sample count. For the SPSC-ring path,
+drain the ring after drop; for the `unsafe` staging path, recover the
+boxed buffer (e.g. via `Arc::try_unwrap` on the `Arc<…>` wrapping the
+`UnsafeCell`, mirroring `:591`) and read `len.load(Acquire)` for the
+count. Either way the hot path has zero lock acquisition.
 
 **Do NOT** change the abort/timeout/`drop(stream)` teardown semantics,
 the `target_samples` truncation, or the de-interleave (channel-0)
@@ -612,12 +682,17 @@ a stress test that runs many short captures under load.
 **Post-change demonstration:** zero lock acquisitions on the callback
 hot path (argument: the callback only does an `Atomic::store` and slice
 writes). State it.
-**Correctness guard (add):** a single-producer/single-consumer test
-(behind `audio-device` if cpal-gated; otherwise a unit test of the
-ring/atomic-staging abstraction in isolation) asserting all produced
-samples are received in order with none lost/duplicated. Apply the
-assertion-rigor rule: if it races, fix with a deterministic fence, do
-NOT weaken. SB3: ADD a test that a consumer-side panic does not abort
+**Correctness guard (add — writable only AFTER the design is chosen):**
+the SPSC correctness/ordering test cannot be written until the Primary
+(SPSC-ring) vs Alternative (`unsafe` staging) decision above is settled,
+because its surface (the abstraction under test) differs per path —
+so capture the design choice FIRST, then write the guard. The guard is a
+single-producer/single-consumer test (behind `audio-device` if
+cpal-gated; otherwise a unit test of the chosen ring/atomic-staging
+abstraction in isolation) asserting all produced samples are received in
+order with none lost/duplicated. Apply the assertion-rigor rule: if it
+races, fix with a deterministic fence, do NOT weaken. SB3: ADD a test
+that a consumer-side panic does not abort
 the capture thread (or document that the lock-free design has no
 poisoning surface — the AtomicUsize cannot be "poisoned").
 
