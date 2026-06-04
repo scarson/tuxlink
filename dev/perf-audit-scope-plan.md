@@ -1,101 +1,121 @@
-# Performance-Audit Whole-Repo Scope Partition — DRAFT v1
+# Performance-Audit Whole-Repo Scope Partition
 
 > Purpose: slice the tuxlink repo into bounded scope slices, each suitable for
 > ONE `performance-audit-cycle` run, collectively covering the whole repo.
-> This draft is the subject of a mandatory **two-round adversarial review**
-> before any audit run executes. Hot-path claims marked **[HYP]** are
-> hypotheses for the review to confirm or refute against the actual code.
+> Subject to a mandatory **two-round adversarial review** before any audit run
+> executes.
 
-## Slicing principles (v1)
+## Revision history
 
-1. **Language-homogeneous slices.** Never mix Rust and TS/React in one slice —
-   the audit lanes and profile packs differ (rust/* vs javascript-typescript/*).
-2. **Coherent subsystem + shared data flow** per slice.
-3. **Tractable size band** ~1k–4k LOC. Split anything materially larger so lanes
-   stay precise.
-4. **Hot-path-aware grouping.** Keep genuine compute/render hot paths together;
-   isolate cold CRUD/glue so Impact (reachability × frequency × per-occurrence
-   cost) calibrates honestly.
-5. **Complete coverage.** Every code directory lands in exactly one slice.
+- **v1** (commit 43b7fc4) — initial 22-slice partition. Flaws found by Round 1
+  adversarial review (Claude subagent, agent glade-knoll-shoal): sized on raw
+  LOC (incl. inline `#[cfg(test)]`, `.test.tsx`, `.css`) ≈ 2× production;
+  hallucinated a frontend "waterfall/spectrum render hot path" that does not
+  exist; mis-ranked modem-ARQ and grib as hot.
+- **v2** (this) — re-sized on production LOC, corrected hot-path map, slices by
+  perf-relevance, batches cold glue, adds the omitted real-time audio path +
+  live-RX pipeline overlay, closes coverage gaps. 22 → 5 full + 1 overlay +
+  9 reduced-depth + 1 cold sweep. **Awaiting Round 2 (Codex / independent
+  engine).**
 
-## Repo size baseline (code LOC, approx)
+## Slicing principles (v2)
 
-- Rust modem `tuxmodem/crates/`: phy 3.1k, tx 1.3k, rx 1.0k, fec 1.6k, rig-rts 0.85k, rig-cm108 0.71k
-- `hf-channel-sim/`: 1.6k
-- Rust backend `src-tauri/src/`: ~50k (winlink 21.9k, ui_commands 6.1k, winlink_backend 3.3k, modem_commands 1.8k, native_mailbox 1.1k, config 1.2k, search 2.6k, forms 3.0k, + lifecycle/misc)
-- TS/React `src/`: ~33k (radio 8.4k, shell 7.6k, mailbox 5.6k, wizard 2.5k, help 1.9k, search 1.4k, compose 1.3k, forms 1.2k, + smaller)
+1. **Language-homogeneous** slices — Rust and TS never mix (different lanes /
+   profile packs).
+2. **Size on PRODUCTION LOC** — exclude inline `#[cfg(test)]` modules, `.test.*`,
+   `.css`. Verified: raw ≈ 2× production (e.g. `tuxmodem-phy` 1760 prod / 1358
+   test; `winlink/modem` ~4.5k prod / ~4.6k test). Most v1 "oversized" flags
+   dissolve once measured correctly.
+3. **Slice by perf-relevance, not raw size.**
+4. **No frontend render hot loop exists** — verified: zero `canvas` / `getContext`
+   / `WebGL` and only one one-shot `requestAnimationFrame` (`help/ReadingPane.tsx:41`
+   scroll-into-view) in all of `src/`. Tier E is warm/cold UI, never a render
+   hot path.
+5. **Complete coverage**; test/bin/probe harnesses explicitly out-of-scope.
+6. **Live-RX/TX pipeline** is an analysis overlay, not a slice (the dominant cost
+   compounds across the A-tier slice boundary).
 
-Total ≈ 96k LOC of code.
+## Corrected hot-path map (Round 1 + verified)
 
----
+| Where | Evidence | Rank |
+|-------|----------|------|
+| OFDM per-symbol FFT **replanning** + per-symbol allocs | `tuxmodem-phy/src/ofdm_main/receiver.rs::demodulate_one_symbol` (fresh `FftPlanner` + replan every symbol, per-symbol `Vec`/`HashSet`/`Mapper`); `transmitter.rs::modulate_one_symbol` (same) | **Critical** |
+| LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (msg-passing `incoming` vecs allocated inside the `max_iters` loop) | **Critical** |
+| Frame-sync sliding cross-correlation | `tuxmodem-phy/src/sync/preamble.rs::scan` O(sig×template) | Major |
+| Real-time audio callback / ring buffer | `tuxmodem-phy/src/audio_device.rs` (CPAL stream; sets the real-time deadline) — **omitted from v1** | Major (deadline) |
+| Equalizer per-symbol alloc + interpolation | `tuxmodem-phy/src/ofdm_main/equalizer.rs::equalize` | Secondary |
+| Search index/extract loops | `src-tauri/src/search/extractor.rs:281,371` + SQLite FTS | Warm |
+| LZHUF compression | `winlink/lzhuf.rs::compress`/`insert_node` (real algo, fixed arrays, ~once per message → low frequency) | Modest |
 
-## Proposed slices
-
-### Tier A — Rust real-time DSP / modem signal path (highest perf value) **[HYP]**
-
-| ID | Slice | Paths | ~LOC |
-|----|-------|-------|------|
-| A1 | OFDM PHY core | `tuxmodem/crates/tuxmodem-phy/src` (ofdm_main, sync, equalizer, constellations, coded_modulation, robustness_floor, subcarrier_snr) | 3.1k |
-| A2 | Modem TX/RX pipelines | `tuxmodem-tx/src` + `tuxmodem-rx/src` | 2.3k |
-| A3 | FEC encode/decode | `tuxmodem-fec/src` | 1.6k |
-| A4 | HF channel simulator | `hf-channel-sim/src` | 1.6k |
-
-### Tier B — Rust rig / PTT control (real-time but I/O-bound)
-
-| ID | Slice | Paths | ~LOC |
-|----|-------|-------|------|
-| B1 | PTT / rig control + watchdog | `tux-rig-rts/src` + `tux-rig-cm108/src` | 1.6k |
-
-### Tier C — Rust Winlink protocol / transport (data-transfer hot-ish) **[HYP]**
-
-| ID | Slice | Paths | ~LOC |
-|----|-------|-------|------|
-| C1 | Compression + B2F message assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` | 2.4k |
-| C2 | Modem-mode ARQ session | `winlink/modem/` | 9.1k → **SPLIT?** |
-| C3 | AX.25 packet | `winlink/ax25/` | 3.3k |
-| C4 | Telnet / P2P transport | `winlink/telnet.rs`, `telnet_listen.rs`, `telnet_p2p*.rs`, `listener/`, `relay_banner.rs` | 6.0k → **SPLIT?** |
-| C5 | Session / handshake / credentials | `winlink/session.rs`, `handshake.rs`, `credentials.rs`, `secure.rs`, `mod.rs` | 2.5k |
-
-### Tier D — Rust app backend / IPC / storage (mostly cold glue) **[HYP: low perf value]**
-
-| ID | Slice | Paths | ~LOC |
-|----|-------|-------|------|
-| D1 | IPC command surface | `ui_commands.rs` | 6.1k → **SPLIT?** |
-| D2 | Backend orchestration + modem control | `winlink_backend.rs`, `modem_commands.rs`, `modem_status.rs` | 5.7k |
-| D3 | Storage / config | `native_mailbox.rs`, `config.rs`, `user_folders.rs`, `session_log.rs` | 2.8k |
-| D4 | Feature backends | `search/`, `catalog/`, `forms/`, `grib/`, `position/` | 7.5k → **SPLIT?** |
-| D5 | App lifecycle / windows | `bootstrap.rs`, `wizard.rs`, `lib.rs`, `app_backend.rs`, `compose_window.rs`, `help_window.rs`, `tray.rs`, `consent_gate.rs`, `theme_state.rs`, `bin/` | 2.9k |
-
-### Tier E — TS/React frontend (render hot paths + cold UI) **[HYP]**
-
-| ID | Slice | Paths | ~LOC |
-|----|-------|-------|------|
-| E1 | Radio UI / waterfall-spectrum | `src/radio/` | 8.4k → **SPLIT?** |
-| E2 | Mailbox list / reader | `src/mailbox/` | 5.6k |
-| E3 | App shell / layout / state | `src/shell/` | 7.6k → **SPLIT?** |
-| E4 | Smaller feature UIs (active) | `src/search`, `compose`, `packet`, `connections`, `session`, `modem` | 3.4k |
-| E5 | Setup / forms / help UIs (cold) | `src/wizard`, `forms`, `help`, `grib`, `catalog` | 6.8k |
-
-**Slice count: 22.** Open issues flagged inline: 5 slices likely exceed the size
-band (C2, C4, D1, D4, E1, E3) and several Tier-D/E slices are suspected cold
-glue where a full 8-phase cycle may be low-yield.
+**Refuted as hot (verified):** frontend render (no canvas/RAF); `winlink/modem`
+ARQ (DSP runs in external `ardopcf`/VARA TNC process — this code is TCP plumbing
++ state machine); `src-tauri/src/grib` (composes a request *string*, no binary
+decode); `tuxmodem-tx`/`tuxmodem-rx` crates (thin CLI drivers that call A1/A3);
+`hf-channel-sim` per-sample loop *caches* its FftPlanner (unlike PHY).
 
 ---
 
-## Proposed execution order
+## Slices
 
-A1 → A2 → A3 → A4 (DSP first; highest signal) → C1 → C2 (Winlink data path) →
-E1 → E2 (render hot paths) → B1 → C3 → C4 → C5 → D2 → D1 → D3 → D4 → E3 → E4 →
-D5 → E5 (cold glue last).
+### MUST-DO — full 8-phase cycle (5 + 1 overlay)
 
-## Known tensions for the adversarial review to resolve
+| ID | Slice | Paths | Why full |
+|----|-------|-------|----------|
+| **M1** | OFDM PHY + real-time audio | entire `tuxmodem/crates/tuxmodem-phy/src` (ofdm_main/, sync/, equalizer, constellations, coded_modulation, robustness_floor/, subcarrier_snr, **audio_device.rs**, audio_io.rs, phy_api, modes) | Marquee FFT-replanning + per-symbol allocs; real-time deadline |
+| **M2** | FEC (LDPC) | `tuxmodem-fec/src` | Densest compute in repo; per-iteration allocs |
+| **M3** | ARDOP modem transport | `winlink/modem/ardop/*` (transport.rs 823, session.rs, listener.rs, data.rs) | Real-time-adjacent buffering + socket I/O throughput |
+| **M4** | Search backend | `src-tauri/src/search/` | SQLite FTS + `extractor.rs` substring/line loops — the one warm backend |
+| **M5** | HF channel simulator | `hf-channel-sim/src` | Offline per-sample DSP (`channel.rs::process_block`); lower urgency but genuine |
+| **O1** | **Live RX/TX pipeline overlay** (analysis, NOT a code slice) | reconcile M1+M2: `audio_device`→`demodulate_one_symbol`→`Decoder::decode` per-symbol alloc budget vs audio frame deadline; TX mirror | Per-slice audit misses the compounding end-to-end cost; run after M1 & M2 |
 
-1. **Volume.** 22 full cycles ≈ 150+ subagent dispatches. Is whole-repo
-   coverage at full-cycle depth the right call, or should cold tiers get a
-   single lighter pass / explicit deferral?
-2. **Oversized slices** (C2, C4, D1, D4, E1, E3) — split how, along what seam?
-3. **Cold-glue value** — D3/D4/D5/E5 may yield ~nothing; include anyway for
-   completeness, or document-and-defer?
-4. **Cross-slice hot paths** — e.g. the live RX audio→PHY→FEC→ARQ→UI pipeline
-   spans A1/A2/A3/C2/D2/E1. Does per-slice auditing miss end-to-end pipeline
-   cost? Should there be one cross-cutting "live-receive pipeline" slice?
+### NICE-TO-HAVE — reduced-depth cycle (lanes: algorithmic-complexity, allocation, data-access, + concurrency where threads exist; skip framework-currency/payload/startup)
+
+| ID | Slice | Paths |
+|----|-------|-------|
+| **R1** | Modem TX/RX CLI orchestration | `tuxmodem-tx/src` + `tuxmodem-rx/src` (thin) |
+| **R2** | Rig / PTT control | `tux-rig-rts/src` + `tux-rig-cm108/src` (PTT, watchdog timing) |
+| **R3** | Compression + B2F assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` |
+| **R4** | VARA + shared modem | `winlink/modem/vara/*`, `modem/mod.rs`, `process.rs` |
+| **R5** | AX.25 datalink | `winlink/ax25/` |
+| **R6** | Telnet / P2P transport | `winlink/telnet.rs`, `telnet_listen.rs`, `telnet_p2p*.rs`, `relay_banner.rs` |
+| **R7** | P2P listener gate | `winlink/listener/` (decide, packet_gate, allowed_stations, station_password, arms_record) |
+| **R8** | B2F session driver | `winlink/session.rs`, `handshake.rs`, `credentials.rs`, `secure.rs`, `mod.rs` |
+| **R9** | Warm frontend UI | `src/radio/` (1 Hz sparkline tick churn, `useSampleHistory`) + `src/mailbox/` (`MessageList.tsx` non-virtualized large-mailbox scaling, `messageSort.ts`) |
+
+### DEFER — single batched COLD SWEEP (3 lanes only: complexity + allocation + data-access)
+
+- **Rust cold:** `ui_commands.rs`; `winlink_backend.rs` + `modem_commands.rs` +
+  `modem_status.rs`; `config.rs` + `native_mailbox.rs` + `user_folders.rs` +
+  `session_log.rs`; `forms/` + `grib/` + `position/` + `catalog/`;
+  `bootstrap.rs` + `lib.rs` + `main.rs` + `app_backend.rs` + `compose_window.rs`
+  + `help_window.rs` + `tray.rs` + `consent_gate.rs` + `theme_state.rs`.
+- **TS cold/warm:** `src/shell/` (warm exception: `markdownRender.ts` +
+  `sanitizeHtml.ts` on large message/help bodies — flag in sweep); `src/search`,
+  `compose`, `packet`, `connections`, `session`, `modem`; `src/wizard`, `forms`,
+  `help`, `grib`, `catalog`; root `App.tsx` + `main.tsx` + `routing.ts`.
+
+### OUT-OF-SCOPE (documented, not audited)
+
+`test_helpers.rs`, `src-tauri/src/bin/`, `tuxmodem/crates/*/src/bin/`, all
+`*/tests/`, `*/examples/`, every inline `#[cfg(test)]` module, `*.test.tsx`.
+**Measurement gate:** no Criterion benches exist — recommend adding them to
+`tuxmodem-fec` + `tuxmodem-phy` to *measure* the M1/M2 hot-path claims (Phase 4
+of those cycles).
+
+---
+
+## Execution order
+
+M1 → M2 → **O1** (pipeline overlay) → M3 → M4 → M5 → R1 → R2 → R3 → R4 → R5 →
+R6 → R7 → R8 → R9 → cold sweep.
+
+**Totals:** 5 full + 1 overlay + 9 reduced + 1 cold sweep = **16 audit units**
+(was 22). Est. dispatch count ~80 (was ~150).
+
+## Coverage ledger (every code dir lands once)
+
+- Rust modem: phy→M1, fec→M2, tx+rx→R1, rig-rts+rig-cm108→R2. ✅
+- hf-channel-sim→M5. ✅
+- winlink: modem/ardop→M3, modem/vara+mod+process→R4, lzhuf+message+compose+proposal+transfer+wire→R3, ax25→R5, telnet*+relay_banner→R6, listener→R7, session+handshake+credentials+secure+mod→R8. ✅
+- src-tauri other: search→M4; ui_commands/winlink_backend/modem_commands/modem_status/config/native_mailbox/user_folders/session_log/forms/grib/position/catalog/bootstrap/lib/main/app_backend/windows/tray/consent_gate/theme_state→cold sweep. ✅
+- src frontend: radio+mailbox→R9; shell/search/compose/packet/connections/session/modem/wizard/forms/help/grib/catalog + root→cold sweep. ✅
