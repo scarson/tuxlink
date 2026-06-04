@@ -4,7 +4,7 @@
 directory/package set, "everything", "all of `<X>`", or any surface materially
 larger than one `performance-audit-cycle` run is optimized for. A single cycle's
 lanes perform best on a **precise, bounded, perf-relevant** surface (one coherent
-subsystem — see sizing below). This method turns "audit the whole thing" into a
+subsystem — see [Sizing](#sizing-how-big-is-one-slice)). This method turns "audit the whole thing" into a
 **reviewed partition** of bounded slices, each fed to its own cycle run, that
 collectively cover all the code — avoiding both naïve failure modes: mega-runs
 (lane precision collapses on huge scope) and over-fragmentation (Impact
@@ -22,15 +22,40 @@ mis-calibrates when a finding's caller lives in another slice).
 
 ---
 
+## TL;DR — minimal ordered checklist
+
+1. **Route (S0).** Named bounded scope → run the cycle directly. ≤2 slices / small
+   → **lightweight path** (survey + eyeball + run + 3-line ledger, no gate). Else →
+   full method.
+2. **One program or many? (S0.5).** Monorepo of deployables → one plan+ledger *per
+   deployable*; shared libs audited once.
+3. **Survey (S1).** Production LOC per unit (`tokei` minus the exclude table);
+   record raw→prod delta.
+4. **Map (S2).** Classify workload (CPU / IO / event-driven); run the HOT/WARM/COLD
+   checklist; "no hot path" is valid.
+5. **Slice (S3).** Coherent subsystems; SPLIT-IFF/KEEP-IFF; prefer fewer/larger;
+   complete the disjoint-coverage ledger.
+6. **Calibrate (S4).** Only for a hot symbol whose caller is in another slice —
+   ≤1-page frequency map; unknown caller → assume-hot.
+7. **Tier (S5).** HOT→FULL, WARM→REDUCED, COLD→sweep(s), cross-slice→OVERLAY.
+8. **Gate.** Review depth scales with slice count; skip for 1–2 slices.
+9. **Order + persist + execute (S6).** Hottest first; commit per slice; ledger =
+   resumable.
+
+---
+
 ## S0 — Route by size (three-way, don't over-ceremony the small case)
 
 - **Precise bounded scope** (user named a request path / module / package that
   fits one run): skip this method — run the cycle directly.
-- **Lightweight path** — ≤2 natural slices **OR** <~8k production LOC across ≤2
-  languages: do S1 (measure), eyeball the 1–2 slices, run the cycle on each, a
-  3-line ledger, **no formal review round** (a 5-minute self-check against the
-  heuristics table is enough). Only build a frequency map (S4) if a hot impl's
-  caller sits in the other slice.
+- **Lightweight path** — PRIMARY gate **≤2 natural slices**; LOC is a secondary,
+  language-scaled check (~<8k for verbose ecosystems, ~<4k for dense ones — see
+  [Sizing](#sizing-how-big-is-one-slice)) across ≤2 languages: do S1 (measure), eyeball the 1–2 slices,
+  run the cycle on each, a 3-line ledger, **no formal review round** (a 5-minute
+  self-check against the heuristics table is enough). Only build a frequency map
+  (S4) if a hot impl's caller sits in the other slice. **Self-check the S4 blind
+  spot:** confirm no hot symbol's frequency is driven from the other slice; if it
+  is, build the ≤1-page frequency map even on the lightweight path.
 - **Full method** — a repo / multi-package / >~8k LOC / >2 languages: S1–S6 + the
   review gate, with review depth scaled by slice count (see the gate).
 
@@ -44,6 +69,19 @@ audited **once** as their own slice and *referenced* by each service's ledger
 (marked `shared` — neither re-sliced per consumer nor dropped). Cross-*service*
 frequency is set over the network (see S4). Only after this do you partition
 within a single program.
+
+- **.NET caveat:** a `.csproj` is usually a **library, not a deployable** — the
+  deployable is the **entry-point project** (Web/Worker/Api); the rest are shared
+  libs (audit once, reference). Do not produce one "service" partition per
+  `.csproj`.
+- **Same axis at two scales:** the deployable-split (S0.5) and the
+  process-boundary split (S3 principle 1) are the **same axis at two scales** — a
+  backend+SPA in one repo is a *process boundary* handled by S3-p1, **not** a
+  per-service split.
+- **Data/ML repos (notebooks, pipelines):** the audit unit is the **DAG stage /
+  pipeline step**, not a package or notebook; the hot path is a dataframe/Spark op
+  or a data-loader; size by **stage + data volume**, not LOC band; partition along
+  **DAG-stage seams** (cell/stage execution order replaces the call graph).
 
 ---
 
@@ -62,10 +100,10 @@ Enumerate before slicing:
     |---|---|
     | Rust | inline `#[cfg(test)]` spans, `tests/`, `benches/`, `target/` |
     | Go | `*_test.go`, `*.pb.go`/`*_gen.go` + `// Code generated` banner, `vendor/` |
-    | Python | `tests/`, `test_*.py`/`*_test.py`, `migrations/`, `*_pb2.py`, `.venv/` |
-    | JS/TS | `*.test.*`/`*.spec.*`, `__tests__`, `*.d.ts` gen, `dist/`/`build/`, `node_modules/` |
-    | Java/Kotlin | `src/test/`, generated sources dir, `build/` |
-    | C#/.NET | `*.Tests`, `obj/`/`bin/`, `*.Designer.cs`, `*.g.cs` |
+    | Python | `tests/`, `test_*.py`/`*_test.py`, `conftest.py`, `__pycache__/`, `migrations/`, `*_pb2.py`, `.venv/` |
+    | JS/TS | `*.test.*`/`*.spec.*`, `__tests__`, `*.stories.*`, snapshot dirs, `*.d.ts` gen, `dist/`/`build/`, `node_modules/` |
+    | Java/Kotlin | `src/test/`, generated sources dir (incl. generated gRPC/proto stubs), `build/` |
+    | C#/.NET | `*.Tests`, `obj/`/`bin/`, `*.Designer.cs`, `*.g.cs`, `*.AssemblyInfo.cs`, EF Core `Migrations/`, generated gRPC/proto stubs |
   - Subtract inline-test line spans (they inflate same-file counts); detect
     generated code by header banner (`@generated`, `Code generated … DO NOT EDIT`).
   - **Record raw→production delta per unit** (the ratio is non-uniform — 0.1×–6.9×
@@ -96,8 +134,10 @@ Then map where work concentrates **and** classify the calibration hazards:
   wiring. **CONFIRM before flagging dead** — dynamic dispatch, trait objects, FFI,
   plugins, **and especially framework wiring (routers, DI containers,
   `@Scheduled`/`@EventListener`/Celery/Sidekiq task names, signals, webhooks,
-  reflection)** defeat grep. "No in-tree caller" is NOT dead in dynamic/DI/
-  serverless code → treat as **LIVE-uncertain** until you've checked the
+  reflection, cloud event bindings (queue/cron/HTTP triggers declared in IaC),
+  Python import-time registries (decorators only wire if the module is imported —
+  import graph ≠ call graph))** defeat grep. "No in-tree caller" is NOT dead in
+  dynamic/DI/serverless code → treat as **LIVE-uncertain** until you've checked the
   framework's wiring.
 - **External-process boundaries** — work done in a child process / DB / cache /
   queue / GPU / remote service. The audited code there is **I/O + orchestration**,
@@ -119,6 +159,11 @@ live path but with bounded/low-frequency work, or a secondary/occasional path.
 **Tie-breaker:** if you can't find the loop/handler/query that makes it hot, it is
 **not** hot → default **WARM** (never silently assume hot or cold).
 
+**S2-vs-S4 axes (don't conflate them):** these are different axes — an
+unverified-hot **slice** is tiered WARM (S2 tie-breaker); a confirmed-hot
+**finding** whose cross-slice **frequency** is unresolved is ranked assume-hot
+(S4). Don't apply S4's optimistic-Impact rule to a whole slice's tier.
+
 ## S3 — Cut the slices (principles + crisp rules)
 
 1. **One primary ecosystem per slice — keep embedded languages with their
@@ -137,15 +182,20 @@ live path but with bounded/low-frequency work, or a secondary/occasional path.
 2. **Coherent subsystem + shared data flow** per slice (one pipeline stage / one
    feature / one service-triplet), not an arbitrary chunk.
 3. **Size to the sweet-spot, by build-unit first, LOC as a sanity check** (see
-   Sizing). Split larger along **real module/file seams** (name the files per
+   [Sizing](#sizing-how-big-is-one-slice)). Split larger along **real module/file seams** (name the files per
    sub-slice). **God-file with no seams:** synthesize seams by symbol cluster /
    call-graph community, run the pieces as an OVERLAY family, and flag the file
    itself as a maintainability finding.
 4. **Slice by perf-relevance, not raw size** — carve genuine hot paths out; pull a
-   warm exception out of a cold bucket; batch the rest.
+   warm exception out of a cold bucket; batch the rest. **Perf-relevance overrides
+   LOC for merge/split:** never merge away a hot slice because it's small — an
+   IO-orchestration layer is small by LOC but large by Impact.
 5. **Complete, disjoint coverage** — every code unit in **exactly one** slice;
    maintain a coverage ledger reconciled against an actual file listing; list
-   **out-of-scope** explicitly (tests, `bin/` probes, generated). **Generated-but-
+   **out-of-scope** explicitly (tests, `bin/` probes, generated). **OVERLAYs are
+   analysis-only passes, NOT coverage units** — they do NOT appear in the
+   disjoint-coverage ledger (their member slices already do) and do not emit a
+   `runs.jsonl` regression line the same way. **Generated-but-
    hot exception:** if generated code is genuinely on a hot path (a generated
    parser/codec/serializer), audit it FULL, tag `generated-source`, and target the
    **generator/template**, not the emitted file. *[case: a Rust command module was
@@ -154,11 +204,35 @@ live path but with bounded/low-frequency work, or a secondary/occasional path.
 
 **SPLIT-IFF / KEEP-IFF decision rule** (replaces prose judgment): **SPLIT** a
 candidate iff its two halves have *different hot-path character* OR *different
-primary ecosystems* OR it exceeds the sized band with a real seam. **KEEP
+primary ecosystems* OR it exceeds the sized band (see [Sizing](#sizing-how-big-is-one-slice)) with a real seam. **KEEP
 together** iff they share a data flow AND a frequency driver AND fit the band.
 **Tie-breaker: prefer fewer/larger** — over-fragmentation fails *silently* (S4
 mis-rank), oversize fails *loudly* (the run tells you it's too big and you
 re-slice once; see S6).
+
+## Sizing — how big is one slice?
+
+**The build-unit / coherent-subsystem is the PRIMARY sizer** — one package/crate/
+module/service-triplet/pipeline-stage, cut along real seams (S3). Size by *what is
+a coherent perf story*, not by hitting a LOC number.
+
+**Production-LOC band as a sanity check** (per-ecosystem, because verbosity
+differs — a number that's "too big" in one ecosystem is mid-band in another):
+
+| Ecosystem | Per-slice production-LOC band (sanity check) |
+|---|---|
+| Python / Ruby | ~0.5–2k |
+| Rust / TS | ~1–4k |
+| Go / Java / Kotlin / C# | ~2–6k |
+| C / C++ | by **translation unit**, not a flat band |
+
+If a build-unit lands outside its band, that's a prompt to look for a seam (split)
+or a sibling to merge — not a hard rule. The band is the *check*; the build-unit
+is the *sizer*.
+
+**Note:** "~100k LOC → ~10–20 units" is a **Rust/TS datapoint** *[case]* — count
+**features/services, not lines**. Don't port that unit-count to a denser or more
+verbose ecosystem without re-deriving it from the band above.
 
 ## S4 — Cross-slice frequency calibration (the subtle one; make it fail-safe)
 
@@ -183,10 +257,17 @@ fail-safe** — never a global whole-program analysis:
   B's endpoint N×/request — read API contracts/clients/tracing). Capture these in
   the frequency map as first-class inputs (from load context / IaC), not just
   in-tree counts.
+- **Shared-substrate fan-in:** a shared lib called in-process by N units is a
+  many-to-one **fan-in** — calibrate its frequency by the **hottest caller** (the
+  union of caller frequency classes), and tier it by that.
 - **Fail-safe:** if the caller is unknown or unaudited, tag the finding
-  `frequency-unresolved — assume hot` at **optimistic** Impact, so the cycle's
-  Phase-3 cross-validation **demotes** a false positive — never silently
-  under-rank a real one.
+  `frequency-unresolved — assume hot` at **optimistic** Impact; the cycle's
+  Phase-3 cross-validation re-ranks it **if it can resolve the caller** — but if
+  the caller stays unresolved, **surface the finding in the roll-up for the
+  operator to confirm reachability**, rather than letting an unverified assume-hot
+  finding ship top-ranked. (Phase 3 re-reads cited code and re-ranks Impact by
+  reachability, so it demotes when it CAN reach the caller; the roll-up surface
+  covers the case where it can't.) Never silently under-rank a real one.
 
 ## S5 — Depth tiers + verification modes
 
@@ -194,9 +275,14 @@ fail-safe** — never a global whole-program analysis:
 - **REDUCED** (algorithmic/memory/data-access/concurrency; skip idiom-currency/
   payload-startup unless flagged) — WARM slices.
 - **COLD SWEEP** (one batched run, ~3 lanes: complexity + allocation + data-access)
-  over all COLD glue at once — coverage without waste.
+  over all COLD glue at once — coverage without waste. Batched **up to one run's
+  capacity (the [Sizing](#sizing-how-big-is-one-slice) band)** — cold glue exceeding
+  that gets **several** cold sweeps partitioned by build-unit/area, not one. The
+  economy is *fewer lanes per run*, not *unbounded LOC per run*.
 - **OVERLAY** (analysis-only) — a hot pipeline spanning several slices; run after
-  its members.
+  its members. Same capacity caveat: an OVERLAY spanning more than one run's
+  capacity (the [Sizing](#sizing-how-big-is-one-slice) band) is split into several
+  overlay passes, not run as one oversized pass.
 
 **Map the hot/warm/cold checklist result → tier:** HOT→FULL, WARM→REDUCED,
 COLD→the sweep, cross-slice-pipeline→OVERLAY.
@@ -236,7 +322,8 @@ without radio hardware].*
 - **Repo-level roll-up:** after the slices, a short cross-slice synthesis (shared
   root causes, repo-wide themes, heat map). **Conditionally REQUIRED** when the
   request was a posture question ("how's the repo's performance?"); optional when
-  it was "find and queue fixes".
+  it was "find and queue fixes". For a **service monorepo** the roll-up is
+  **two-level** — a per-service synthesis, then a cross-service meta-roll-up.
 
 ---
 
@@ -276,7 +363,7 @@ between rounds; finalize when a round finds only nits.
 | Trap | Rule |
 |------|------|
 | Size on raw LOC | Measure **production** LOC; non-uniform ratio; build-unit is the primary sizer. |
-| One LOC band for all languages | Scale by verbosity (Python/Ruby ~0.5–2k, Rust/TS ~1–4k, Go/Java/C# ~2–6k, C/C++ by translation unit). |
+| One LOC band for all languages | Scale by verbosity; build-unit is the primary sizer (see [Sizing](#sizing-how-big-is-one-slice)). |
 | Infer hot paths from names | **Verify against code**; classify workload shape first (CPU vs IO vs event-driven). |
 | "Hot path = CPU loop" everywhere | For services it's DB/N+1/fan-out/serialization, sized by request rate. |
 | "No in-tree caller = dead" | Not in dynamic/DI/serverless code — check framework wiring; else LIVE-uncertain. |

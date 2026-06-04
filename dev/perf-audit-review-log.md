@@ -243,3 +243,25 @@ real application that was itself hardened five rounds, not theory.
 Rounds 4–5 (holistic re-attack + consolidation/contradiction-check on v2) pending
 to satisfy the ≥5-pass bar for this high-leverage artifact. Known minor open
 item: a one-line data/ML (notebook/DAG-stage) caveat (R1§5) not yet added.
+
+### Method rounds 4–5 (v2 → v3, SHIP)
+
+| Round | Lens | Verdict | Headline |
+|-------|------|---------|----------|
+| 4 | holistic re-attack on v2 (merge defects + interaction effects) | needs-edits | dead `## Sizing` cross-refs; **COLD SWEEP/OVERLAY had no capacity cap** (mega-run at the cold tier); S4 "Phase-3 demotes" was an unverified downstream claim; `.csproj`≠deployable; no TL;DR spine; shared-substrate frequency dropped |
+| 5 | ship-gate / consolidation | **SHIP-WITH-FIXES**, litmus PASS | confirmed the dead-ref + SKILL.md trigger inconsistencies; confirmed the method reproduces this session's own partition |
+
+**v3 applied all must-fixes** (subagent, verified): `## Sizing` section created + all
+four cross-refs resolve to it; COLD SWEEP/OVERLAY capped at one run's capacity
+(several sweeps on huge repos); S4 fail-safe softened (re-rank if caller
+resolvable, else surface to operator — no asserted auto-demotion); shared-lib
+fan-in frequency rule; two-level roll-up for service monorepos; `.csproj`≠deployable;
+TL;DR 9-line spine; SKILL.md trigger points at S0's router (no competing number);
+exclude-table + dead-code-list gaps closed. **Method status: v3 / SHIP.**
+
+**Review accounting (operator's ≥5-round bar):** the method received **5 independent
+Opus review passes** (generalizability, robustness, followability, holistic
+re-attack, ship-gate) on top of being *distilled from* this session's 5-round-
+reviewed real partition. Round 4 (a design-lens pass) again proved its keep — it
+caught the cold-sweep capacity hole and the S4 downstream-assumption that the three
+lane-bound angle-reviews each missed.
