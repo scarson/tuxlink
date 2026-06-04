@@ -217,3 +217,37 @@ within each category. Author: glade-knoll-shoal.
   reuse, `process_with_scratch`, React memo/virtualization), but flagged that the
   index didn't help. Library-API perf entries (not just toolchain/build flags)
   would make idiom-currency more grounded for these ecosystems.
+
+## Tail-grind + cold-sweep: the anti-padding stress test (operator-requested)
+
+- 👍 **The anti-padding discipline is the skill's most impressive property under
+  stress.** The operator asked to grind the low-value tail (R5 ax25, R6 telnet,
+  R4 vara, R1 tx/rx, R2 rig) + the cold sweep specifically to test whether the
+  skill degrades into manufacturing nits when there's little to find. It did not.
+  Across the tail: **multiple lanes returned "No significant findings"**; the rest
+  ranked findings as MINOR cleanliness with explicit *"not throughput levers"*
+  language; R2 returned no findings + an honest **hardware-unfalsifiable caveat**
+  (it refused to fake a timing finding it couldn't measure); the cold sweep's
+  3 passes all returned **"confirmed cold"** rather than padded nit-lists. This is
+  the `calibration-governs-generation` + anti-sycophancy rules working exactly as
+  designed. **Diminishing returns on finding COUNT is real; degradation in
+  quality is not** — a useful, falsified-then-confirmed result.
+- 👍 **Lanes corrected my dispatch hints from source** — R5's flagged `Arc<Mutex>`
+  was test-only; R5/R6 per-byte reads were `BufReader`-backed (not syscall storms).
+  The "your reading of the code is primary" rule makes the audit robust to a wrong
+  scope brief.
+- 👍 **The cold sweep validated BOUNDARIES, not just absence.** It confirmed the
+  R9 4 Hz cascade is localized to `radio/` (shell uses the gated hook) and the
+  R9-2 per-keystroke `invoke` is one field, not a pattern (search/compose are
+  debounced) — i.e. it told us what is NOT a problem, increasing confidence in the
+  warm findings. Worth blessing "the sweep confirms localization" as an explicit
+  sweep output.
+- 🟡 **The cross-slice roll-up I had to produce by hand** (`WHOLE-REPO-ROLLUP.md`)
+  is the single most valuable artifact of a whole-repo run — it turns 16 unit
+  reports into ~7 systemic themes + a prioritized fix list (e.g. the
+  transport-write-buffering theme is invisible per-unit but obvious across M3/R8/
+  R6/R4). The `performance-audit-cycle` has no skill-level step that produces this;
+  the `whole-repo-scoping` method doc prescribes a two-level roll-up but the
+  underlying cycle doesn't emit one. **Strongest single feature request: a
+  whole-repo roll-up phase** (or a sibling skill) that consumes `runs.jsonl` +
+  the consolidated reports and emits the systemic-themes synthesis.

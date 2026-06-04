@@ -21,7 +21,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | Phase | State |
 |-------|-------|
 | Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
-| Execute audit units (per finalized plan) | IN PROGRESS — DONE: M1 (full cycle), M2/M4/M5 (audits), O1 (overlay), W0 (pre-artifact), M3 (reduced). PENDING: R1-R6,R8,R9 (reduced) + cold sweep. R7 folded into sweep (demoted v5). |
+| Execute audit units (per finalized plan) | **COMPLETE** — ALL 16 units done (M1 full; M2/M4/M5 audits; M3/R9/R8/R3/R10/R5/R6/R4/R1/R2 reduced; O1 overlay; W0 pre-artifact; cold sweep). See WHOLE-REPO-ROLLUP. |
 | **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); FINAL (v3/SHIP — 5 review passes). **Port-back to scarson/agent-skills required** (no write access this session). |
 
 ## Status board — audit units (order per plan v2; may change after rounds 2–5)
@@ -48,7 +48,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | R8 | REDUCED | winlink B2F session driver | **AUDIT DONE** (reduced, 3 lanes; W0 context) | `docs/perf-audits/2026-06-04T17-30-r8-session-*`. 6 findings (1M/5m). MAJOR: coalesce fragmented proposal-batch control writes + add turn-boundary flush (same theme as M3 BufWriter). Per-message body allocs (read_block/frame_block) attributed to R3 via W0. |
 | R9 | REDUCED | src/radio + src/mailbox (warm React/TS UI) | **AUDIT DONE** (reduced, 4 frontend lanes) | `docs/perf-audits/2026-06-04T17-00-r9-frontend-ui-*` (4 lanes+consolidated+kickoff). 7 findings (3M/4m). Headline: 4 Hz modem:status re-render cascade (whole ArdopRadioPanel + unbounded SessionLog re-projection) + per-keystroke Tauri invoke. Cleared: Virtuoso/memoized-sort/event-push (anti-padding). |
 | R10 | REDUCED | storage/config backend (native_mailbox+config+user_folders+session_log) | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T18-30-r10-storage-*`+kickoff. 9 findings (1C/3M/5m)+1 bug. CRITICAL: native_mailbox::list read-amplification (reads full bodies for header view; serve from M4 index/header-cache — relieves R9). MAJOR: fs::rename-not-copy move (+data-loss bug); decorate-sort the date comparator. |
-| SWEEP | SWEEP | all cold Rust + cold/warm TS (see plan) + R7/listener | PENDING | |
+| SWEEP | SWEEP | all cold Rust + cold/warm TS + R7/listener | **DONE** (3 scan-for-warm passes) | `docs/perf-audits/2026-06-04T20-00-cold-sweep-consolidated.md` + sweep-{a,b,c}. CONFIRMED COLD — 0 warm-in-cold; validated R9/R10 findings are localized; 2 suspected-bug/nit notes. |
 
 ## Decision log (substantive autonomous calls during execution)
 - Tiering/scope decisions captured in the review-log (v1→v6) + scope plan; per-unit
