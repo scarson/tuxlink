@@ -22,6 +22,8 @@ This skill orchestrates sibling workhorses in this plugin: [`performance-audit`]
 
 If `$ARGUMENTS` is empty or unclear, the runner MUST ask the user for a scope before Phase 1. Useful shapes: a request/render path, a feature, a directory/package, a PR number, a commit range. The runner MUST NOT guess a scope or default to "everything" — performance lanes perform best on a precise, bounded surface.
 
+**Whole-repo / oversized scope.** If the user DOES want "everything" — a whole repository, a top-level directory/package set, "all of `<X>`", or any surface materially larger than one run is optimized for (roughly >4k production LOC or spanning more than one language/package) — do NOT cram it into one run and do NOT silently audit only part of it. Instead follow [`whole-repo-scoping.md`](whole-repo-scoping.md): survey + measure production LOC, build a cheap hot-path/reachability map, cut the code into bounded language-homogeneous slices by perf-relevance, calibrate cross-slice call frequency, assign depth tiers (full / reduced / one batched cold sweep / overlay), **adversarially review the partition before executing**, then run this cycle once per slice with a persistent progress ledger. That method turns "audit the whole repo" into a reviewed plan of bounded runs that collectively cover all the code.
+
 ---
 
 ## Phase 1 — Research scope
