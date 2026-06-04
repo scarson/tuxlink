@@ -10,12 +10,14 @@
 2. The generalizable scope-slicing METHOD is FINAL (v3/SHIP — 5 review passes;
    `.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md
    routing). Remaining work on it is the PORT-BACK only (step 3).
-3. The whole-repo perf audit is partially executed: MUST-DO tier M1 (full
-   cycle) / M2 / M4 done; **M5 + the reduced tier (M3,R1-R10) + the cold
-   sweep + the W0 pre-artifact are PENDING** — resume from
-   dev/perf-audit-progress.md (pick the first non-DONE unit, run 6 blind Opus
-   lanes, synthesize, commit).
-3. PORT-BACK (important): the scope-slicing method + the M1 plan improvements are
+3. The whole-repo perf audit is partially executed. DONE: M1 (full cycle),
+   M2/M4/M5 (audits), O1 (overlay), W0 (pre-artifact), M3 (reduced), R9 (reduced
+   frontend) — i.e. the entire MUST-DO tier + every skill mechanism + all 6
+   stack classes. **PENDING: reduced units R1,R2,R3,R4,R5,R6,R8 + the cold
+   sweep** (R7 folded into the sweep). Resume from dev/perf-audit-progress.md
+   (pick the first PENDING unit; run R8 BEFORE R3 and hand R3/R8/R10 the W0
+   frequency map; 4 blind Opus lanes per reduced unit, synthesize, commit).
+4. PORT-BACK (important): the scope-slicing method + the M1 plan improvements are
    in tuxlink's VENDORED skill copy only. To reach the operator's OTHER repos,
    port .claude/skills/performance-audit-cycle/{whole-repo-scoping.md,SKILL.md}
    back to scarson/agent-skills (plugins/superpowers-plus/skills/
@@ -53,25 +55,42 @@
 ## 2. What's DONE (committed + pushed)
 - superpowers + agent-skills install (repo `.claude/`).
 - Scope partition v6/GO (5-round reviewed) + all review artifacts.
-- M1 full cycle; M2 + M4 audits (consolidated reports + per-run `runs.jsonl`
-  entries + bug-hunt kickoffs; all under `docs/perf-audits/`).
-- M1 remediation plan (`docs/plans/2026-06-04-m1-ofdm-phy-perf-audit-remediation-plan.md`)
-  + its plan-review + applied fixes.
-- Scope-slicing method v2 + SKILL.md routing.
+- **Audit units (all under `docs/perf-audits/`, each with per-lane reports +
+  consolidated + `runs.jsonl` entry; bug-hunt kickoffs where bugs surfaced):**
+  - **M1** tuxmodem-phy — FULL CYCLE (audit→plan→plan-review→fixes). 13 findings.
+  - **M2** tuxmodem-fec (LDPC) — audit; fix-plan DEFERRED (latent crate). 9 findings.
+  - **M4** src-tauri/search (SQLite FTS5) — audit; fix-plan DEFERRED. 10 findings + 6 bugs.
+  - **M5** hf-channel-sim (offline sim) — audit; DEFERRED (dev-only). 9 findings.
+  - **M3** winlink/modem/ardop — REDUCED audit (4 lanes). 7 findings, ALL MINOR.
+  - **R9** src/radio + src/mailbox — REDUCED frontend audit (React 19). 7 findings (3M/4m).
+  - **O1** live RX/TX pipeline overlay (M1+M2 reconciliation).
+  - **W0** winlink call-frequency map (pre-artifact for R3/R8/R10).
+- M1 remediation plan + its plan-review + applied fixes.
+- Scope-slicing method **v3/SHIP** (5 review passes) + SKILL.md routing,
+  de-opaqued (no S# codes — operator-flagged discipline fix).
 - Rich first-use skill feedback: `dev/perf-audit-skill-feedback.md` (blind-lane
-  validation, cross-lane agreement as confidence signal, cost-map's framing
-  correction, dedup burden, latent-reachability calibration, runner-pastes-packs
-  adaptation, etc.).
+  validation, cross-lane agreement, cost-map framing correction, latent/dev-only
+  reachability calibration, reduced-tier validation, calibration-from-source
+  [R9 lanes corrected a 1Hz→4Hz dispatch error], plan-review caught a blocking
+  compile error, cross-unit coherence + the no-cross-run-synthesis gap,
+  version-index DSP/React coverage gap).
 
 ## 3. What's PENDING / DEFERRED (resume via dev/perf-audit-progress.md)
 - **Method**: DONE (v3/SHIP). Only the **port-back to scarson/agent-skills** remains
   (step 3 above) — no write access this session.
-- **W0 pre-artifact**: the winlink call-frequency map (read `winlink_backend.rs`
-  loops) — REQUIRED before the winlink R-slices (R3/R8/R10). Cheap.
-- **Audit units not yet run** (order in the plan): M5 (hf-channel-sim; crate
-  pre-builds clean), then reduced tier M3/R1-R10, then the cold sweep. Each is a
-  `performance-audit-cycle` run (or trimmed run for reduced/cold). Dispatch 6
-  blind Opus lanes per unit, synthesize, commit per unit.
+- **W0 pre-artifact**: DONE — `docs/perf-audits/2026-06-04-W0-winlink-call-frequency-map.md`.
+  Hand it to R3/R8/R10 as adjacent context (it has the watch-item: is the whole
+  Outbox re-compressed every connect?).
+- **Audit units not yet run** (reduced tier): **R8** (winlink session driver) →
+  **R3** (compression+B2F; lzhuf/read_block — use W0) → **R10** (storage; the
+  native_mailbox `list` read-amplification) → **R4** (VARA+shared modem) →
+  **R5** (ax25) → **R6** (telnet/P2P) → **R1** (tx/rx CLI) → **R2** (rig/PTT,
+  timing-only, hardware-deferred) → then the **cold sweep** (3-lane batch over
+  the cold Rust + cold/warm TS in the plan; R7/listener folded in). Reduced =
+  ~4 blind Opus lanes (algorithmic/memory/data-access/concurrency; add
+  idiom-currency only where a framework idiom surface exists). Synthesize +
+  commit per unit. Most are likely all-minor (protocol/glue at low rates) — like
+  M3 — but run them blind and let calibration decide.
 - **M2/M4 fix-plans**: deferred (M2 latent; M4 queued). The audits + bug-hunt
   kickoffs are the operator-reviewable deliverables.
 - **M1 fix-plan execution**: NOT executed — it's a subagent-ready plan for
