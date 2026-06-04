@@ -1,0 +1,58 @@
+# Performance-Audit Whole-Repo Run — Execution Progress Ledger
+
+**Purpose:** survive ephemeral-container restarts. A fresh session reads this
+to know exactly where the autonomous perf-audit run stands and what to do next.
+
+**Session moniker:** glade-knoll-shoal · **Branch:**
+`claude/superpowers-agent-skills-setup-BtMEr` · **Started:** 2026-06-04
+
+## How to resume (if container restarted)
+1. Read `dev/perf-audit-review-log.md` (scope-decision state) and
+   `dev/perf-audit-scope-plan.md` (the slice plan, latest version).
+2. Read this ledger's "Status board" — pick the first non-DONE unit and continue.
+3. Per-unit artifacts live in `docs/perf-audits/` (validated findings) and
+   `docs/plans/*-perf-audit-remediation-plan.md` (fix plans). If a unit's
+   artifacts exist but it's marked IN-PROGRESS, verify completeness before moving on.
+4. Append skill UX observations to `dev/perf-audit-skill-feedback.md`.
+5. Commit + push after every unit.
+
+## Phase board
+
+| Phase | State |
+|-------|-------|
+| Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
+| Execute audit units (per finalized plan) | **COMPLETE** — ALL 16 units done (M1 full; M2/M4/M5 audits; M3/R9/R8/R3/R10/R5/R6/R4/R1/R2 reduced; O1 overlay; W0 pre-artifact; cold sweep). See WHOLE-REPO-ROLLUP. |
+| **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); FINAL (v3/SHIP — 5 review passes). **Port-back to scarson/agent-skills required** (no write access this session). |
+
+## Status board — audit units (order per plan v2; may change after rounds 2–5)
+
+> Tiers: FULL = 8-phase cycle; REDUCED = trimmed lanes; OVERLAY = analysis only;
+> SWEEP = batched 3-lane cold pass. State: PENDING / IN-PROGRESS / DONE / SKIPPED.
+
+| Unit | Tier | Scope | State | Artifacts |
+|------|------|-------|-------|-----------|
+| M1 | FULL | tuxmodem-phy (OFDM + real-time audio) | **DONE (full cycle)** | audit: `docs/perf-audits/2026-06-04T14-24-m1-ofdm-phy-*` (6 lanes + consolidated + runs.jsonl + bug-hunt-kickoff); plan: `docs/plans/2026-06-04-m1-ofdm-phy-perf-audit-remediation-plan.md` (12 tasks, all P1–P12); plan-review: `dev/perf-audit-reviews/m1-plan-review.md` (needs-minor-edits → fixes applied). 13 findings (3C/6M/4m) + 3 suspected bugs. NOT executed (fix-plan is for operator-reviewed execution). |
+| M2 | FULL | tuxmodem-fec (LDPC) | **AUDIT DONE**; fix-plan DEFERRED (crate is latent/dead-code) | `docs/perf-audits/2026-06-04T15-00-m2-fec-*` (6 lanes+consolidated+kickoff). 9 findings (1C/4M/4m), all latent. Headline: one SPA-loop rewrite (O(d_c²)→O(d_c) check update + flat CSR + scratch reuse). |
+| O1 | OVERLAY | live RX/TX pipeline (M1+M2) | **DONE** | `docs/perf-audits/2026-06-04-O1-live-pipeline-overlay.md` — per-symbol allocs are batch (not RT); only audio_device mutex is the RT-deadline item; sequence M2 SPA rewrite before FEC integration. |
+| W0 | PRE | winlink call-frequency map (R3/R8/R10 context) | **DONE** | `docs/perf-audits/2026-06-04-W0-winlink-call-frequency-map.md` |
+| M3 | REDUCED | winlink/modem/ardop (external-TNC transport) | **AUDIT DONE** (reduced, 4 lanes) | `docs/perf-audits/2026-06-04T16-30-m3-ardop-*` (4 lanes+consolidated). 7 findings, ALL MINOR (validates the demote). Actionable: BufWriter for tiny B2F tokens (on-air bytes); status-meters-dark-during-exchange. No Mutex-across-IO (sound by construction). |
+| M4 | FULL | src-tauri/src/search | **AUDIT DONE**; fix-plan DEFERRED | `docs/perf-audits/2026-06-04T15-30-m4-search-*` (6 lanes + consolidated + ledger + bug-hunt-kickoff). 10 findings (1C/5M/4m) + 6 bugs. |
+| M5 | FULL | hf-channel-sim (offline sim, dev-only) | **AUDIT DONE**; fix-plan DEFERRED (dev-only tool) | `docs/perf-audits/2026-06-04T16-00-m5-hfsim-*` (6 lanes+consolidated+kickoff). 9 findings (5M/4m), dev-sweep-calibrated. Headline: FadingShaper refactor + rayon-parallelize the sweep. |
+| R1 | REDUCED | tuxmodem-tx + tuxmodem-rx | **AUDIT DONE** (reduced, combined lane) | `docs/perf-audits/2026-06-04T19-30-r1-txrx-*`. 3 MINOR (offline-CLI). Whole-WAV reads + WidebandLowDensityFloor::new per-call (would bite a batch driver). |
+| R2 | REDUCED | tux-rig-rts + tux-rig-cm108 | **AUDIT DONE** (reduced; hardware-deferred) | `docs/perf-audits/2026-06-04T19-30-r2-rig-*`. No significant findings (1 MINOR sleep-poll). Hardware-unfalsifiable caveat recorded. Watchdog key-down reliable. |
+| R3 | REDUCED | winlink compression + B2F assembly | **AUDIT DONE** (reduced, 3 lanes; W0 payoff) | `docs/perf-audits/2026-06-04T18-00-r3-compression-*`. 7 findings (2M/5m). lzhuf algo CONFIRMED sound (Okumura BST). Wins: pre-size read_block/frame_block/lzhuf-out buffers; tighten read_block to BufRead. read_block per-byte is NOT a syscall storm (all callers wrap BufReader). |
+| R4 | REDUCED | winlink/modem/vara + shared | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T19-30-r4-vara-*`. 2 MINOR. R4-1 unbuffered write half = 4th instance of the transport-write theme (ardop/session/telnet/vara all). |
+| R5 | REDUCED | winlink/ax25 | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T19-00-r5-ax25-*`. 4 MINOR, 0 major (anti-padding held: 2 lanes 'No significant findings'; window bounded ≤7; FCS=TNC). |
+| R6 | REDUCED | winlink telnet/P2P transport | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T19-00-r6-telnet-*`. 4 MINOR, 0 major. R6-1 unbuffered write half = M3/R8 theme on a 3rd transport (transport-write-buffering is now SYSTEMIC). |
+| R7 | ~~REDUCED~~ | winlink/listener gate | **FOLDED into SWEEP** (demoted v5 — no hot loop) | see cold sweep |
+| R8 | REDUCED | winlink B2F session driver | **AUDIT DONE** (reduced, 3 lanes; W0 context) | `docs/perf-audits/2026-06-04T17-30-r8-session-*`. 6 findings (1M/5m). MAJOR: coalesce fragmented proposal-batch control writes + add turn-boundary flush (same theme as M3 BufWriter). Per-message body allocs (read_block/frame_block) attributed to R3 via W0. |
+| R9 | REDUCED | src/radio + src/mailbox (warm React/TS UI) | **AUDIT DONE** (reduced, 4 frontend lanes) | `docs/perf-audits/2026-06-04T17-00-r9-frontend-ui-*` (4 lanes+consolidated+kickoff). 7 findings (3M/4m). Headline: 4 Hz modem:status re-render cascade (whole ArdopRadioPanel + unbounded SessionLog re-projection) + per-keystroke Tauri invoke. Cleared: Virtuoso/memoized-sort/event-push (anti-padding). |
+| R10 | REDUCED | storage/config backend (native_mailbox+config+user_folders+session_log) | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T18-30-r10-storage-*`+kickoff. 9 findings (1C/3M/5m)+1 bug. CRITICAL: native_mailbox::list read-amplification (reads full bodies for header view; serve from M4 index/header-cache — relieves R9). MAJOR: fs::rename-not-copy move (+data-loss bug); decorate-sort the date comparator. |
+| SWEEP | SWEEP | all cold Rust + cold/warm TS + R7/listener | **DONE** (3 scan-for-warm passes) | `docs/perf-audits/2026-06-04T20-00-cold-sweep-consolidated.md` + sweep-{a,b,c}. CONFIRMED COLD — 0 warm-in-cold; validated R9/R10 findings are localized; 2 suspected-bug/nit notes. |
+
+## Decision log (substantive autonomous calls during execution)
+- Tiering/scope decisions captured in the review-log (v1→v6) + scope plan; per-unit
+  fix-plan deferrals recorded per row above (M2 latent, M4/M5 queued, reduced-tier
+  folds into a future winlink/storage-tier remediation plan). Lanes run BLIND each
+  unit. M5/R2 hardware/dynamic limits noted in their consolidated reports.
+- (none yet)
