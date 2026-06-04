@@ -21,7 +21,8 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | Phase | State |
 |-------|-------|
 | Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
-| Execute audit units (per finalized plan) | IN PROGRESS — M1 audit done; M1 fix-plan running |
+| Execute audit units (per finalized plan) | IN PROGRESS — M1 full cycle DONE; M2 + M4 audits DONE; M5 + reduced + cold DEFERRED |
+| **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); in adversarial review (3 angle-rounds running). **Port-back to scarson/agent-skills required** (no write access this session). |
 
 ## Status board — audit units (order per plan v2; may change after rounds 2–5)
 
@@ -34,8 +35,8 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | M2 | FULL | tuxmodem-fec (LDPC) | AUDIT in synthesis (5/6 lanes done; idiom-currency pending); fix-plan DEFERRED (crate is latent/dead-code — low urgency) | `docs/perf-audits/2026-06-04T15-00-m2-fec-*` |
 | O1 | OVERLAY | live RX/TX pipeline (M1+M2) | PENDING | |
 | M3 | FULL | winlink/modem/ardop | PENDING | |
-| M4 | FULL | src-tauri/src/search | PENDING | |
-| M5 | FULL | hf-channel-sim | PENDING | |
+| M4 | FULL | src-tauri/src/search | **AUDIT DONE**; fix-plan DEFERRED | `docs/perf-audits/2026-06-04T15-30-m4-search-*` (6 lanes + consolidated + ledger + bug-hunt-kickoff). 10 findings (1C/5M/4m) + 6 bugs. |
+| M5 | FULL | hf-channel-sim | PENDING (DEFERRED — crate pre-built clean; DSP-similar to M1) | |
 | R1 | REDUCED | tuxmodem-tx + tuxmodem-rx | PENDING | |
 | R2 | REDUCED | tux-rig-rts + tux-rig-cm108 | PENDING | |
 | R3 | REDUCED | winlink compression + B2F assembly | PENDING | |
