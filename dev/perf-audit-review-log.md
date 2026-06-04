@@ -217,3 +217,29 @@ The R4 substantive defect is the proof the ≥5-round bar earned its keep: a
 hot-path-only review (rounds 1–3 converged "clean") would have shipped a
 mis-calibrated winlink audit. Final plan: **16 units + W0 pre-artifact**,
 execution order in `dev/perf-audit-scope-plan.md`.
+
+---
+
+## Method review — `whole-repo-scoping.md` (the generalizable scope-slicing method)
+
+A second substantive decision (operator ask, 2026-06-04): codify the whole-repo
+slicing method as a reusable skill artifact. Reviewed by independent Opus agents
+from distinct angles (reports in `dev/perf-audit-reviews/method-round-*.md`).
+
+| Round | Angle | Verdict | Folded into v2 |
+|-------|-------|---------|----------------|
+| 1 | generalizability across ecosystems | needs-edits (Rust-biased in 4 places) | workload-shape classifier (CPU/IO/event); "one primary pack, embedded langs stay with driver" reframe; verbosity-scaled sizing table; deployable-service partition root for monorepos; de-provenanced examples |
+| 2 | robustness / edge-cases | needs-edits | S0.5 one-program-or-many; "no hot path is valid"; god-file synthetic-seam OVERLAY; generated-but-hot; coverage-drift reconcile + planning SHA; bounded re-slice loop; SPLIT/KEEP rule; fail-safe demand-driven S4 |
+| 3 | followability / proportionality | conditionally-followable, under-operationalized + over-heavy | production-LOC how-to table; dead-code grep + confirm-before-flag; hot/warm/cold checklist; review-depth scaling table (5-round = CEILING not default); lightweight path; ledger schema; "when in doubt" rules |
+
+**Convergence across the three:** dynamic-dispatch "no-caller≠dead" caveat (R1+R3);
+SPLIT/KEEP decision rule (R2+R3); one-program-or-many (R1§4 + R2); production-LOC
+operationalization (R1§1 + R3). All accepted into **v2**.
+
+**Empirical validation:** the method also reproduces, as a worked example, this
+session's own 5-round-reviewed whole-repo partition — i.e. it's distilled from a
+real application that was itself hardened five rounds, not theory.
+
+Rounds 4–5 (holistic re-attack + consolidation/contradiction-check on v2) pending
+to satisfy the ≥5-pass bar for this high-leverage artifact. Known minor open
+item: a one-line data/ML (notebook/DAG-stage) caveat (R1§5) not yet added.
