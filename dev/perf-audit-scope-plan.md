@@ -11,11 +11,19 @@
 - **v2** (b21cfbe) — Round 1 (Opus): sized on production LOC, killed the
   nonexistent frontend "render hot path," sliced by perf-relevance, batched cold
   glue, added the omitted real-time audio path + live-RX overlay. 22 → 16 units.
-- **v3** (this) — Round 2 (Opus): fixed `wizard.rs` coverage gap; added two
+- **v3** (1f… ) — Round 2 (Opus): fixed `wizard.rs` coverage gap; added two
   missed PHY hot paths (H1 per-subcarrier alphabet rebuild, H7 narrow-FSK
   per-call FFT planner); demoted M3 (ARDOP) full→reduced (verified external-TNC
   I/O); promoted the storage backend out of the cold sweep (native_mailbox
-  read-amplification); corrected two soft claims. **Round 3 pending.**
+  read-amplification); corrected two soft claims.
+- **v4** (this) — Round 3 (Opus): verified all of Round 2's claims against
+  source (all confirmed); **corrected a factual error** — `MessageList.tsx` IS
+  virtualized (`react-virtuoso`), so R9's mailbox half is weak and the real
+  large-mailbox cost is the backend H8 (R10), not a frontend render; down-ranked
+  H7 to Secondary (per-call, planner already hoisted); refined H9; named the
+  concrete M3 target (`data.rs` per-byte `VecDeque` drain). Coverage verified
+  airtight (all 18 `src-tauri/src/*.rs` + every subdir + crate). **Round 4
+  pending.**
 
 ## Slicing principles (v3)
 
@@ -36,15 +44,15 @@
 | # | Where | Evidence | Rank | Slice |
 |---|-------|----------|------|-------|
 | H0 | OFDM per-symbol FFT **replanning** + per-symbol allocs | `tuxmodem-phy/.../receiver.rs::demodulate_one_symbol` (fresh `FftPlanner`/symbol, per-symbol `Vec`/`HashSet`/`Mapper`); `transmitter.rs::modulate_one_symbol` | Critical | M1 |
-| **H1** | **Per-subcarrier alphabet rebuild in LLR** | `constellations.rs::compute_llr:142` calls `self.alphabet()` (up to 64 nested `map()` allocs), invoked **once per data subcarrier** at `receiver.rs:83` — nested alloc in the RX demod inner loop, worse than the per-symbol planner | Critical | M1 |
+| **H1** | **Per-subcarrier alloc in LLR/demod inner loop** | `constellations.rs::compute_llr:142` rebuilds `self.alphabet()` (up to 64 nested `map()` allocs) **per data subcarrier** at `receiver.rs:83`; `receiver.rs:78` ALSO allocates a fresh `Mapper::new` per subcarrier — nested alloc in the RX demod inner loop, worse than the per-symbol planner | Critical | M1 |
 | H2 | LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (`incoming` vecs inside the `max_iters` loop) | Critical | M2 |
 | H3 | Frame-sync sliding cross-correlation | `tuxmodem-phy/src/sync/preamble.rs::scan` O(sig×template) | Major | M1 |
 | H4 | Real-time audio callback / ring buffer | `tuxmodem-phy/src/audio_device.rs` (CPAL stream; real-time deadline) | Major (deadline) | M1 |
 | H5 | Equalizer per-symbol alloc + interpolation | `ofdm_main/equalizer.rs::equalize` | Secondary | M1 |
-| **H7** | **Narrow-FSK per-call FFT planner** | `robustness_floor/narrow_fsk.rs:83` builds a fresh `FftPlanner` per call — same anti-pattern as the OFDM path, previously only flagged for OFDM | Major | M1 |
+| **H7** | Narrow-FSK per-call FFT planner | `robustness_floor/narrow_fsk.rs:83` builds a fresh `FftPlanner` per *call* (already hoisted out of the symbol loop, `:83-95`) — real but lower frequency than the OFDM per-symbol path | Secondary | M1 |
 | H6 | Search index/extract loops | `src-tauri/src/search/extractor.rs:281,371` + SQLite FTS | Warm | M4 |
 | H8 | **Mailbox list read-amplification** | `native_mailbox.rs::list:99-104` does `read_dir` + `fs::read(body)` **per message** to list a folder — N+1 / read-amplification; backend root of the non-virtualized `MessageList` symptom | Warm | R10 |
-| H9 | hf-sim per-call FFT planner | `hf-channel-sim/src/fading.rs:49,86` + `analysis.rs:50` re-plan per call (only `channel.rs` caches) | Warm | M5 |
+| H9 | hf-sim per-call FFT planner | `analysis.rs:50` builds a fresh planner per call (genuinely uncached). `channel.rs` caches its planner; `fading.rs:49,86` re-plans hit rustfft's internal plan cache so they're cheaper than they look | Warm | M5 |
 | H10 | LZHUF compression | `winlink/lzhuf.rs::compress`/`insert_node` (real algo, fixed arrays, ~once/message → low frequency) | Modest | R3 |
 
 **Refuted as hot (verified):** frontend render; `winlink/modem` ARQ (DSP runs in
@@ -70,7 +78,7 @@ framing + state machine); `src-tauri/src/grib` (composes a request string);
 
 | ID | Slice | Paths | Focus |
 |----|-------|-------|-------|
-| **M3** | ARDOP modem transport (**demoted from full**) | `winlink/modem/ardop/*` (transport.rs, session.rs, listener.rs, data.rs) | concurrency (split-borrow hazard `transport.rs:666`) + alloc + socket I/O; DSP is external-TNC |
+| **M3** | ARDOP modem transport (**demoted from full**) | `winlink/modem/ardop/*` (transport.rs, session.rs, listener.rs, data.rs) | concrete target: per-byte `VecDeque<u8>` drain + `leftover.extend(payload)` moving whole message body byte-by-byte (`data.rs:104,145`); concurrency split-borrow hazard (`transport.rs:666`); socket I/O. DSP is external-TNC |
 | **R1** | Modem TX/RX CLI orchestration | `tuxmodem-tx/src` + `tuxmodem-rx/src` (thin) | |
 | **R2** | Rig / PTT control | `tux-rig-rts/src` + `tux-rig-cm108/src` | watchdog timing, I/O |
 | **R3** | Compression + B2F assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` | lzhuf (H10) |
@@ -79,13 +87,15 @@ framing + state machine); `src-tauri/src/grib` (composes a request string);
 | **R6** | Telnet / P2P transport | `winlink/telnet.rs`, `telnet_listen.rs`, `telnet_p2p*.rs`, `relay_banner.rs` | |
 | **R7** | P2P listener gate | `winlink/listener/` | |
 | **R8** | B2F session driver | `winlink/session.rs`, `handshake.rs`, `credentials.rs`, `secure.rs`, `mod.rs` | |
-| **R9** | Warm frontend UI | `src/radio/` (1 Hz sparkline churn, `useSampleHistory`) + `src/mailbox/` (`MessageList.tsx` non-virtualized, `messageSort.ts`) | |
+| **R9** | Warm frontend UI | `src/radio/` (1 Hz sparkline churn, `useSampleHistory`) + `src/mailbox/` (re-render behavior, context/selector cost). **NB:** `MessageList.tsx` IS virtualized (`react-virtuoso`, `:18,338`) and `messageSort` is `useMemo`'d — the large-mailbox cost is the *backend* H8 (R10), not a frontend render; R9's mailbox half is a light check | |
 | **R10** | Storage / config backend (**promoted from cold sweep**) | `native_mailbox.rs`, `config.rs`, `user_folders.rs`, `session_log.rs` | mailbox list read-amplification (H8) |
 
 ### DEFER — single batched COLD SWEEP (3 lanes only: complexity + allocation + data-access)
 
 - **Rust cold:** `ui_commands.rs`; `winlink_backend.rs` + `modem_commands.rs` +
-  `modem_status.rs`; `forms/` + `grib/` + `position/` + `catalog/`;
+  `modem_status.rs` (note: `modem_status.rs:392` is a 4 Hz background
+  broadcaster — borderline-warm but stays cold; sweep should eyeball its
+  per-tick work); `forms/` + `grib/` + `position/` + `catalog/`;
   `bootstrap.rs` + **`wizard.rs`** (Tauri `WizardMutex` command module — *Rust*,
   was orphaned in v2) + `lib.rs` + `main.rs` + `app_backend.rs` +
   `compose_window.rs` + `help_window.rs` + `tray.rs` + `consent_gate.rs` +

@@ -22,7 +22,7 @@ each revision). **Execution ledger:** `dev/perf-audit-progress.md`.
 |-------|----------|--------|-------------|-------------------|
 | 1 | Opus subagent | v1 | `round-1.md` | major rework → v2 |
 | 2 | Opus subagent | v2 | `round-2.md` | minor-edits → v3 |
-| 3 | Opus subagent | v3 | `round-3.md` | pending |
+| 3 | Opus subagent | v3 | `round-3.md` | minor-edits → v4 |
 | 4 | Opus subagent | v4 | `round-4.md` | pending |
 | 5 | Opus subagent | v5 | `round-5.md` | pending |
 
@@ -91,3 +91,37 @@ fundamentally sound and NOT over-corrected. All findings ACCEPTED:
 
 Outcome: 16 → **4 full + 1 overlay + 11 reduced + 1 cold sweep = 17 units** (M3
 moved full→reduced; R10 added). M5 down-ranked below M4. See v3 in plan artifact.
+
+---
+
+## Round 3 — dispositions (v3 → v4)
+
+Full report: `dev/perf-audit-reviews/round-3.md`. Verdict: **minor-edits** —
+v3 executable, coverage airtight, winlink-family reduced-tiering verified
+correct (the area rounds 1–2 barely read). Directed at the under-examined
+winlink protocol family, cold-sweep internals, and frontend.
+
+1. **Round 2's 4 claims (H1/H7/H8/H9) — all CONFIRMED against source.** Two
+   refined: H1 worse than stated (`receiver.rs:78` also allocs a fresh `Mapper`
+   per subcarrier); H9 nuanced (`analysis.rs:50` is the genuinely uncached
+   planner; `fading.rs` re-plans hit rustfft's internal cache).
+2. **Factual error corrected (important):** R9's "`MessageList.tsx` is
+   non-virtualized" is **FALSE** — it uses `react-virtuoso` (`:18,338`) and the
+   sort is `useMemo`'d. Round 2 grepped for the wrong library (`react-window`).
+   R9 mailbox half reframed as a light check; the real large-mailbox cost is the
+   backend H8 (R10). ACCEPTED.
+3. **H7 rank inflated** — it's per-*call* (planner already hoisted, `:83-95`),
+   not per-symbol. Down-ranked Major → Secondary. ACCEPTED.
+4. **Concrete M3 target named:** `ardop/data.rs:104,145` per-byte `VecDeque<u8>`
+   drain + `leftover.extend(payload)` — the real cost in the demoted ARDOP
+   slice; vindicates the full→reduced demote. ADDED.
+5. **`modem_status.rs:392`** 4 Hz background broadcaster — borderline-warm but
+   stays cold; sweep flagged to eyeball its per-tick work. NOTED (no tier change).
+6. **Coverage:** verified airtight — every `src-tauri/src/*.rs` (all 18), every
+   subdir, every crate, every `src/*/` lands once. No gaps. Structure: 17 units,
+   no merge/split. Cosmetic: `hf-channel-sim` is a repo-root sibling (path in
+   plan already correct).
+
+Outcome: **17 units unchanged**; corrections are accuracy fixes (one false
+claim removed) + rank/target refinements. Two clean rounds in a row (2 & 3 both
+minor-edits) — convergence emerging; Rounds 4–5 will confirm or break it.
