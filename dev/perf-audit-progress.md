@@ -47,7 +47,12 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | R7 | ~~REDUCED~~ | winlink/listener gate | **FOLDED into SWEEP** (demoted v5 — no hot loop) | see cold sweep |
 | R8 | REDUCED | winlink B2F session driver | **AUDIT DONE** (reduced, 3 lanes; W0 context) | `docs/perf-audits/2026-06-04T17-30-r8-session-*`. 6 findings (1M/5m). MAJOR: coalesce fragmented proposal-batch control writes + add turn-boundary flush (same theme as M3 BufWriter). Per-message body allocs (read_block/frame_block) attributed to R3 via W0. |
 | R9 | REDUCED | src/radio + src/mailbox (warm React/TS UI) | **AUDIT DONE** (reduced, 4 frontend lanes) | `docs/perf-audits/2026-06-04T17-00-r9-frontend-ui-*` (4 lanes+consolidated+kickoff). 7 findings (3M/4m). Headline: 4 Hz modem:status re-render cascade (whole ArdopRadioPanel + unbounded SessionLog re-projection) + per-keystroke Tauri invoke. Cleared: Virtuoso/memoized-sort/event-push (anti-padding). |
-| SWEEP | SWEEP | all cold Rust + cold/warm TS (see plan) | PENDING | |
+| R10 | REDUCED | storage/config backend (native_mailbox+config+user_folders+session_log) | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T18-30-r10-storage-*`+kickoff. 9 findings (1C/3M/5m)+1 bug. CRITICAL: native_mailbox::list read-amplification (reads full bodies for header view; serve from M4 index/header-cache — relieves R9). MAJOR: fs::rename-not-copy move (+data-loss bug); decorate-sort the date comparator. |
+| SWEEP | SWEEP | all cold Rust + cold/warm TS (see plan) + R7/listener | PENDING | |
 
 ## Decision log (substantive autonomous calls during execution)
+- Tiering/scope decisions captured in the review-log (v1→v6) + scope plan; per-unit
+  fix-plan deferrals recorded per row above (M2 latent, M4/M5 queued, reduced-tier
+  folds into a future winlink/storage-tier remediation plan). Lanes run BLIND each
+  unit. M5/R2 hardware/dynamic limits noted in their consolidated reports.
 - (none yet)
