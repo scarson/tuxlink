@@ -125,3 +125,19 @@ within each category. Author: glade-knoll-shoal.
   references `docs/perf-audits/runs.jsonl` + `cache/` that don't pre-exist —
   the skill should state it creates them (it does `git add` paths that may not
   exist on a first run, which can error). Will confirm during M1.
+
+## Authoring new skill content — reference-discipline trap (caught by operator)
+
+- 🐞→📝 When I authored the new `whole-repo-scoping.md` method, I labelled its
+  phases `S0/S0.5/S1–S6` and cross-referenced them opaquely ("see S4", "the S2
+  tie-breaker", "S0.5 × S6"). The operator flagged it: the perf-audit skill family
+  **deliberately bans opaque session-identifier references** in persistent
+  artifacts — the very discipline `finding-model.md` enforces for "Lane 4"/"P3"
+  (never a bare opaque label as the sole referent; describe in self-contained
+  terms). The original skill phases carry descriptive titles and the family avoids
+  bare-code cross-refs. **Lesson for the skill:** a CONTRIBUTING/authoring note in
+  the skill (or in `writing-skills`) should state that *new* skill content must
+  follow the same reference discipline — opaque `S#`/section codes used as
+  cross-references are exactly what the finding-reference rule forbids, and it's
+  an easy trap when drafting a multi-phase method. Fixed by renaming every phase
+  to a descriptive self-contained title and rephrasing all cross-refs.
