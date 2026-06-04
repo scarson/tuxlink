@@ -20,8 +20,8 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 
 | Phase | State |
 |-------|-------|
-| Scope partition + ≥5-round adversarial review | IN PROGRESS (round 1 done; 2–5 pending) |
-| Execute audit units (per finalized plan) | NOT STARTED |
+| Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
+| Execute audit units (per finalized plan) | IN PROGRESS — M1 audit done; M1 fix-plan running |
 
 ## Status board — audit units (order per plan v2; may change after rounds 2–5)
 
@@ -30,7 +30,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 
 | Unit | Tier | Scope | State | Artifacts |
 |------|------|-------|-------|-----------|
-| M1 | FULL | tuxmodem-phy (OFDM + real-time audio) | PENDING | |
+| M1 | FULL | tuxmodem-phy (OFDM + real-time audio) | AUDIT DONE; plan+review in progress | `docs/perf-audits/2026-06-04T14-24-m1-ofdm-phy-*` (6 lanes + consolidated + runs.jsonl + bug-hunt-kickoff); plan → `docs/plans/2026-06-04-m1-ofdm-phy-perf-audit-remediation-plan.md` |
 | M2 | FULL | tuxmodem-fec (LDPC) | PENDING | |
 | O1 | OVERLAY | live RX/TX pipeline (M1+M2) | PENDING | |
 | M3 | FULL | winlink/modem/ardop | PENDING | |

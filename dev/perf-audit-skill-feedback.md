@@ -64,9 +64,56 @@ within each category. Author: glade-knoll-shoal.
   hardcode `superpowers-plus@0.2.0` and note the provenance. Minor: vendoring
   skills flat loses the plugin.json the schema references.
 
+## Running M1 (tuxmodem-phy) — Phase 2/3 observations
+
+- 👍 **Blind-lane validity is the headline result.** I dispatched the 6 lanes
+  *blind* — given only scope + realistic-load context, NOT the hot-path map that
+  5 rounds of targeted review had produced. The lanes independently reproduced
+  the ENTIRE review hot-path map (per-symbol FFT planner, per-subcarrier
+  alphabet rebuild, preamble O(N·M) correlation) AND added findings the review
+  missed (RT-callback mutex-across-copy, per-symbol pilot `HashSet`, per-symbol
+  equalizer, per-symbol `Vec` churn). This is strong evidence the lane
+  decomposition + anti-sycophancy + calibration actually *discovers*, not just
+  restates a prior. Running a perf-audit skill blind is, in hindsight, the right
+  way to TEST it — it measures discovery, not confirmation. Worth a methodology
+  note in the skill.
+- 👍 **Cross-lane agreement is a real confidence signal.** P1 (per-symbol FFT
+  planner) was independently flagged CRITICAL by 5 of 6 lanes; the RT mutex by 2.
+  The synthesis instruction to record "which lanes flagged each" + the
+  fingerprint make this legible. Leading the consolidated report with the
+  agreement worked well.
+- 👍 **The cost-map (descriptive) lane earned its keep.** It produced the one
+  architectural *correction* of the run — that the DSP is batch (record-buffer →
+  then-demod), so the heavy per-symbol work is NOT on the cpal real-time callback
+  path and doesn't compete with the audio deadline. The adversarial lanes were
+  busy finding allocations; the descriptive map caught a *framing* error in the
+  pre-audit assumption. Good argument for keeping a non-adversarial lane.
+- 🟡 **Dedup burden is real on a small hot core.** 5 lanes all reported the
+  FFT-planner finding in 5 different framings (algorithmic "defeats plan cache",
+  memory "KB twiddle alloc", data-access "111 builds/payload", idiom-currency
+  "rustfft planner-reuse fast path", cost-map "region #1"). Great for confidence,
+  but the runner does real work collapsing them to one finding with one
+  fingerprint. The skill could note that high overlap on a small hot core is
+  expected and tell the runner to lead with the agreement (which I did).
+- 🟡 **`reasoning_effort` recorded honestly as "default"** — the Agent tool sets
+  `model: opus` but exposes no reasoning-effort knob (confirmed). Frontmatter
+  says so rather than claiming x-high.
+- 👍 **Lane-reads-its-own-pack adaptation worked** — each lane read `rust.md` +
+  `version-indexes/rust.md` itself; no need for the runner to hold/paste packs.
+  Recommend the skill bless this as a first-class subagent-dispatch mode.
+
 ## Cross-validation / findings model
 
-- (pending M1)
+- 👍 The fingerprint scheme (`<lane>:<file>:<symbol>:<slug>`, symbol-not-line)
+  made dedup + the (empty, first-run) regression diff straightforward to emit.
+- 🟡 **Suspected-bugs handoff has a small scope-bleed.** 3 SBs surfaced
+  (preamble off-by-one, Gardner-normaliser bias, RT-thread poison panic); the
+  kickoff file auto-wrote cleanly and the "record don't chase" discipline held.
+  But SB1 (preamble off-by-one) is co-located with a perf finding (P2, same
+  function), and the cycle tells the *perf* plan to fix it in P2's task — so one
+  suspected bug leaks from the bug-hunt track into the perf-remediation track.
+  Sensible pragmatically, but it blurs the "audit records bugs, never fixes
+  them" boundary. Worth the skill calling out the co-located-bug case explicitly.
 
 ## Plan generation / review (writing-plans-enhanced, plan-review-cycle)
 
