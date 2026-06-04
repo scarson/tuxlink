@@ -21,7 +21,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | Phase | State |
 |-------|-------|
 | Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
-| Execute audit units (per finalized plan) | IN PROGRESS — M1 full cycle DONE; M2 + M4 audits DONE; M5 + reduced + cold DEFERRED |
+| Execute audit units (per finalized plan) | IN PROGRESS — DONE: M1 (full cycle), M2/M4/M5 (audits), O1 (overlay), W0 (pre-artifact), M3 (reduced). PENDING: R1-R6,R8,R9 (reduced) + cold sweep. R7 folded into sweep (demoted v5). |
 | **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); FINAL (v3/SHIP — 5 review passes). **Port-back to scarson/agent-skills required** (no write access this session). |
 
 ## Status board — audit units (order per plan v2; may change after rounds 2–5)
@@ -44,7 +44,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | R4 | REDUCED | winlink/modem/vara + shared | PENDING | |
 | R5 | REDUCED | winlink/ax25 | PENDING | |
 | R6 | REDUCED | winlink telnet/P2P transport | PENDING | |
-| R7 | REDUCED | winlink/listener gate | PENDING | |
+| R7 | ~~REDUCED~~ | winlink/listener gate | **FOLDED into SWEEP** (demoted v5 — no hot loop) | see cold sweep |
 | R8 | REDUCED | winlink B2F session driver | PENDING | |
 | R9 | REDUCED | src/radio + src/mailbox (warm UI) | PENDING | |
 | SWEEP | SWEEP | all cold Rust + cold/warm TS (see plan) | PENDING | |
