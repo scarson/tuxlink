@@ -40,7 +40,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | M5 | FULL | hf-channel-sim (offline sim, dev-only) | **AUDIT DONE**; fix-plan DEFERRED (dev-only tool) | `docs/perf-audits/2026-06-04T16-00-m5-hfsim-*` (6 lanes+consolidated+kickoff). 9 findings (5M/4m), dev-sweep-calibrated. Headline: FadingShaper refactor + rayon-parallelize the sweep. |
 | R1 | REDUCED | tuxmodem-tx + tuxmodem-rx | PENDING | |
 | R2 | REDUCED | tux-rig-rts + tux-rig-cm108 | PENDING | |
-| R3 | REDUCED | winlink compression + B2F assembly | PENDING | |
+| R3 | REDUCED | winlink compression + B2F assembly | **AUDIT DONE** (reduced, 3 lanes; W0 payoff) | `docs/perf-audits/2026-06-04T18-00-r3-compression-*`. 7 findings (2M/5m). lzhuf algo CONFIRMED sound (Okumura BST). Wins: pre-size read_block/frame_block/lzhuf-out buffers; tighten read_block to BufRead. read_block per-byte is NOT a syscall storm (all callers wrap BufReader). |
 | R4 | REDUCED | winlink/modem/vara + shared | PENDING | |
 | R5 | REDUCED | winlink/ax25 | PENDING | |
 | R6 | REDUCED | winlink telnet/P2P transport | PENDING | |
