@@ -42,8 +42,8 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | R2 | REDUCED | tux-rig-rts + tux-rig-cm108 | PENDING | |
 | R3 | REDUCED | winlink compression + B2F assembly | **AUDIT DONE** (reduced, 3 lanes; W0 payoff) | `docs/perf-audits/2026-06-04T18-00-r3-compression-*`. 7 findings (2M/5m). lzhuf algo CONFIRMED sound (Okumura BST). Wins: pre-size read_block/frame_block/lzhuf-out buffers; tighten read_block to BufRead. read_block per-byte is NOT a syscall storm (all callers wrap BufReader). |
 | R4 | REDUCED | winlink/modem/vara + shared | PENDING | |
-| R5 | REDUCED | winlink/ax25 | PENDING | |
-| R6 | REDUCED | winlink telnet/P2P transport | PENDING | |
+| R5 | REDUCED | winlink/ax25 | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T19-00-r5-ax25-*`. 4 MINOR, 0 major (anti-padding held: 2 lanes 'No significant findings'; window bounded ≤7; FCS=TNC). |
+| R6 | REDUCED | winlink telnet/P2P transport | **AUDIT DONE** (reduced, 3 lanes) | `docs/perf-audits/2026-06-04T19-00-r6-telnet-*`. 4 MINOR, 0 major. R6-1 unbuffered write half = M3/R8 theme on a 3rd transport (transport-write-buffering is now SYSTEMIC). |
 | R7 | ~~REDUCED~~ | winlink/listener gate | **FOLDED into SWEEP** (demoted v5 — no hot loop) | see cold sweep |
 | R8 | REDUCED | winlink B2F session driver | **AUDIT DONE** (reduced, 3 lanes; W0 context) | `docs/perf-audits/2026-06-04T17-30-r8-session-*`. 6 findings (1M/5m). MAJOR: coalesce fragmented proposal-batch control writes + add turn-boundary flush (same theme as M3 BufWriter). Per-message body allocs (read_block/frame_block) attributed to R3 via W0. |
 | R9 | REDUCED | src/radio + src/mailbox (warm React/TS UI) | **AUDIT DONE** (reduced, 4 frontend lanes) | `docs/perf-audits/2026-06-04T17-00-r9-frontend-ui-*` (4 lanes+consolidated+kickoff). 7 findings (3M/4m). Headline: 4 Hz modem:status re-render cascade (whole ArdopRadioPanel + unbounded SessionLog re-projection) + per-keystroke Tauri invoke. Cleared: Virtuoso/memoized-sort/event-push (anti-padding). |
