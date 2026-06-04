@@ -1,107 +1,315 @@
 # Method Review (generalizability)
 
 **Reviewer:** glade-knoll-shoal
-**Angle:** Generalizability across ecosystems — does the whole-repo-scoping method, distilled from one ~96k-LOC Rust+TS desktop modem app, survive transplant onto Python web apps, Go service monorepos, large JS/TS monorepos, Java/Kotlin Spring, .NET, C/C++, Ruby/Rails, and data/ML repos?
-**Verdict:** **Needs-edits — Rust/desktop-app-biased in three load-bearing places.** The *skeleton* (survey → hot-path map → slice → cross-slice frequency calibration → depth tiers → review gate) is genuinely ecosystem-agnostic and is the method's durable contribution. But three concrete heuristics leak the provenance and will mis-fire on whole classes of repo: (1) the raw LOC sweet-spot band, (2) the unqualified "language-homogeneous slice" rule, and (3) a hot-path model that silently assumes CPU-bound, single-process, single-binary, real-time execution. Each is fixable with a bounded edit. The document even says "tune per ecosystem" on the sizing header — but it tunes nothing, names no axis to tune along, and the rest of the doc contradicts the disclaimer by stating the bands as bare numbers.
+**Angle (single):** Generalizability across ecosystems. The `whole-repo-scoping.md`
+method was distilled from ONE artifact — a ~96k-LOC Rust+TypeScript desktop modem
+app, hardened over five adversarial rounds that were all run against *that* repo.
+This review pressure-tests it against ecosystems it was NOT distilled from:
+Python web (Django/FastAPI), Go service monorepos, large polyglot JS/TS monorepos,
+Java/Kotlin Spring, .NET, C/C++, Ruby/Rails, and data/ML repos.
+**Scope discipline:** I attack generality ONLY. I do not re-litigate hot-path
+accuracy, coverage-ledger soundness, or the review-gate design except where they
+fail *because of* an ecosystem assumption.
+
+**Verdict: NEEDS-EDITS — Rust/desktop-app-biased in four load-bearing places.**
+The *skeleton* generalizes well and is the method's durable contribution:
+survey → cheap hot-path/reachability map → slice into coherent bounded units →
+cross-slice frequency calibration → depth tiers → adversarial review-gate-before-spend.
+That control flow is ecosystem-agnostic and correct. But four concrete heuristics
+leak the single-Rust-app provenance and will mis-fire on whole classes of repo:
+
+1. The **raw-`production-LOC` sweet-spot band (~1–4k) and the "~100k → ~10–20 units"
+   rule** are stated as bare numbers calibrated to one language pair. They do not
+   scale by language verbosity or by build-unit, and the "tune per ecosystem"
+   header names no axis to tune along.
+2. The **"language-homogeneous slice, never mix"** rule is stated as an absolute
+   and actively fragments coherent features in polyglot services — and it does so
+   *because the audit tooling has a separate SQL pack and separate frontend/backend
+   packs*, i.e. a tooling constraint is being sold as a partitioning principle.
+3. The **hot-path / reachability model (S2)** silently assumes CPU-bound,
+   single-process, single-binary, real-time execution. For IO-bound web services,
+   event-driven/serverless code, and dynamic-dispatch languages it mislabels the
+   real cost (which is IO/N+1/fan-out, not "inner loops") and makes the call-graph
+   sketch unreliable.
+4. The **unit-of-audit assumption** — "the repo" is one partition — has no answer
+   for service monorepos (Go/Java/Node services, multi-`.csproj` solutions) where
+   the natural audit boundary is the *deployable service*, not the repo, and where
+   cross-service frequency is set over the *network*, not an in-tree call graph.
+
+Each is fixable with a bounded edit. Concrete wording below. Nothing here requires
+re-deriving the method — these are caveats and one new sizing axis.
 
 ---
 
-## What generalizes well (keep, do not touch)
+## Where it generalizes WELL (give credit, so the edits stay surgical)
 
-The phase structure is the asset and it transfers cleanly:
-
-- **S1 build-units from manifests** already lists `go.mod`, `pyproject.toml`, `*.csproj`, `package.json` — ecosystem-aware by construction. Good.
-- **S1 production-LOC-not-raw-LOC** with a non-uniform multiplier is *more* important in dynamic ecosystems, not less (Rails/Django have enormous test suites; notebooks inflate raw LOC with output cells). The principle generalizes; only the *target number* it feeds is biased (see Failure 1).
-- **S4 cross-slice frequency calibration** is the method's best idea and is fully ecosystem-neutral — "impl and hot caller in different slices" happens in every language. In a Go monorepo it's *the* dominant case (a util package's frequency is set by N services), so S4 actually earns its keep harder outside Rust.
-- **S5 verification-mode tagging (hardware-deferred)** generalizes to "load-deferred / prod-traffic-deferred" with trivial relabeling.
-- **REVIEW GATE** — partition-design review is language-independent.
-
-So the critique below is surgical, not structural. The bones are good.
-
----
-
-## Failure 1 — The ~1–4k production-LOC band and "~100k → ~10–20 units" are Rust-biased and must scale by build-unit, not raw LOC
-
-**The leak.** Both numbers are *information-density* constants disguised as universal constants. A slice should be sized to "as much coherent logic as one set of lanes can hold in working memory and reason about precisely." That budget is roughly constant in *semantic units* (functions, call edges, branches), **not in lines**. Lines-per-semantic-unit varies enormously by ecosystem:
-
-- **Rust** (the provenance): verbose — explicit types, `match` arms, error enums, lifetimes, `impl` blocks. ~1–4k lines is maybe 1–3 coherent subsystems' worth of *logic*.
-- **Python / Ruby**: 2–4× denser. 1–4k lines of Django/Rails is *several* subsystems — a 4k-line band over-stuffs a Python slice and the lanes lose precision exactly the way a mega-run does. A Rails app's whole `app/models` can be <4k lines and is clearly not one slice.
-- **Go**: middling density but the verbosity is in `if err != nil` boilerplate that is *cold*; production-LOC-after-error-glue is what matters, and the band over-counts Go.
-- **Java/Kotlin Spring**: huge lines-to-logic ratio (annotations, DI ceremony, getters, builder boilerplate). A 4k-line Spring slice may be 80% cold glue — the band *under*-stuffs it with real logic and wastes a FULL cycle on annotations.
-- **JS/TS monorepo**: bimodal — hand-written app code is dense; **generated code (protobuf stubs, GraphQL codegen, OpenAPI clients, `.d.ts`) is enormous and near-zero-logic**. A 4k "slice" that's 3.5k generated is a non-audit. S1 says exclude generated code, good — but the band gives no signal that in JS/TS the *generated fraction can dominate a package* and must be excluded before the band even applies.
-- **C/C++**: lines mislead in both directions — headers duplicate declarations, macros expand, templates instantiate. The natural unit is the **translation unit / build target**, not the line.
-
-**The "100k → 10–20 units" rule** is the same constant restated (100k/15 ≈ 6.6k raw ≈ ~3k production per unit — exactly the band's midpoint). It inherits the same bias and additionally assumes the repo *is one audit*. For a **Go microservice monorepo or a JS/TS package monorepo, "the repo" is not one audit at all** — the natural top-level partition is **per service / per package**, and the per-service count drives the unit total, not a global LOC division. The method never says this. An operator pointing it at a 40-service Go monorepo would try to globally LOC-slice across service boundaries and produce slices that straddle deploy units — incoherent for perf purposes (different services have different load, different hot paths, different runtime).
-
-**Concrete fix.**
-1. Reframe the band as a **derived budget, not a constant**: "Size a slice to ~one working-memory budget of *logic* — empirically ~1–4k production LOC **in a verbose compiled language (Rust/C++/Java-minus-glue)**. Scale the line target by ecosystem density: **halve it for Python/Ruby/dense TS (~0.7–2k); raise the cold-glue exclusion aggressively for Java/Spring and Go before measuring.** When in doubt, size by **count of non-trivial functions/handlers (~15–40 per slice)** rather than lines."
-2. Add a **build-unit-first rule for service/package monorepos**: "If the repo is a set of independently deployed services or published packages (Go services, JS/TS workspaces, .NET solutions with many projects), the **first partition is per service/package** — each service is its own whole-repo-scoping problem with its own load profile. Do NOT LOC-slice across a deploy boundary; load, hot paths, and frequency drivers do not cross it coherently."
-3. Add a generated-code caveat to the band itself, not just S1: "In codegen-heavy ecosystems (protobuf/gRPC, GraphQL, OpenAPI, ORM scaffolds, `.d.ts`) the generated fraction can exceed the hand-written fraction of a single package — exclude it *before* applying the band, or the band sizes a non-audit."
+- **S1 survey on production LOC, excluding tests/generated/vendored.** Universally
+  correct. The non-uniform-ratio warning is *more* true elsewhere, not less
+  (Python/Ruby have low ratios; Go/Java have high test+generated ratios).
+- **S4 cross-slice frequency calibration.** The single best idea in the document and
+  it is fully general — arguably *the* reason whole-repo audits go wrong in every
+  ecosystem. Keep verbatim. (One gap: it assumes the caller is *in-tree*; see §4.)
+- **The review-gate-before-spend** and the "≥1 reviewer whose explicit lens is
+  partition design" insight. Ecosystem-neutral; keep.
+- **Depth tiers (FULL/REDUCED/COLD SWEEP/OVERLAY)** as a *concept*. The *batching*
+  intuition is general; only the worked thresholds and the "cold glue" taxonomy are
+  Rust/desktop-flavored (see §5).
+- **Latent/dead-code reachability≈0 flag** generalizes, but its *detection* doesn't
+  in dynamic ecosystems (see §3) — "no in-tree callers" is a static-language test.
 
 ---
 
-## Failure 2 — "Language/ecosystem-homogeneous slice" fragments coherent polyglot features and needs a same-runtime carve-out
+## §1 — The sizing bands are Rust-calibrated and don't scale by language
 
-**The leak.** S3 principle 1 ("Never mix Rust and TS in one slice") is correct *for the case it came from* — a Rust backend and a TS frontend are genuinely different lanes/profile-packs/idiom-indexes, and they're also different processes. But stated as an absolute it mis-cuts the most common server shape: **a single-runtime service whose hot path threads through multiple languages.**
+### The defect
+`~1–4k production LOC` (S0 trigger, S3 principle 3, Sizing header) and
+`~100k → ~10–20 units` are stated as bare numbers. They were measured against
+Rust+TS. The header says "(tune per ecosystem)" but then **tunes nothing and names
+no axis**, and S0/S3 state the numbers without the caveat — so in practice an agent
+slicing a Django repo will use 1–4k LOC directly.
 
-Counter-examples the rule fragments wrongly:
-- **Python/Django service with embedded raw SQL** (or an ORM emitting SQL). The N+1 query, the missing index, the `SELECT *` over a wide table — these are the *dominant* perf findings, and they live at the **Python↔SQL seam**. Splitting "Python" and "SQL" into different slices puts the loop (Python) in one slice and the cost (SQL) in another — that's precisely the S4 frequency-split failure, manufactured by the homogeneity rule itself. The query and its caller are one coherent perf unit.
-- **JS/TS service with inline GraphQL/SQL template strings**, or a React component with a hot `useMemo` over data shaped by a colocated GraphQL query.
-- **Rails with ActiveRecord + SQL + ERB views**, **Java with JPQL/HQL in annotations**, **C with inline asm**, **data/ML pipelines mixing Python orchestration + SQL + a vectorized kernel (NumPy/C)**.
+Why this is biased: **LOC is a proxy for "how much *semantic surface* one cycle's
+lanes can hold with precision," and LOC-per-unit-of-semantics varies ~3–5× across
+languages.**
+- A coherent feature is ~2–4× *fewer lines* in Python/Ruby than in Rust/Go/Java
+  (no type boilerplate, no error-enum plumbing, comprehensions). A 1–4k-LOC Python
+  slice may be 2–3 features fused — too coarse; lanes lose precision exactly the way
+  a mega-run does.
+- Conversely Java/Kotlin Spring and Go are *more* verbose than Rust (getters/setters,
+  DI annotations, `if err != nil`, interface ceremony). A single Spring service of
+  4k LOC may be *one* controller+service+repository triplet — finer than the band
+  implies, so you'd over-fragment.
+- C/C++ headers, generated protobuf/gRPC stubs, and JS/TS codegen blow raw LOC up
+  with near-zero audit value — already covered by "exclude generated," but the *band
+  itself* still assumes hand-written density.
 
-In all of these, "one language per slice" **fragments a coherent feature along a seam that is itself the performance hotspot.** The Rust+TS case is special because there the language boundary *coincides with a process boundary and a lane boundary*. The real principle is not "one language" — it's **"one lane-set + one runtime."**
+### Concrete fix
+Replace the bare band with a **two-axis sizing rule** and a per-ecosystem multiplier
+table. Suggested wording for the Sizing section:
 
-**Concrete fix.** Replace principle 1 with: "**Slice along lane-set + runtime boundaries, which usually but not always coincide with language boundaries.** Keep a host language and its *embedded* sub-languages (SQL in an ORM/raw query, GraphQL/template strings, inline asm/kernels) **in the same slice** when they execute in one runtime and form one data-flow — the host↔SQL seam is frequently *the* hotspot and splitting it manufactures an S4 frequency split. Split when the boundary is also a **process/deploy/runtime boundary** (Rust backend vs TS frontend, service-to-service, app vs DB *engine*) — there the lanes, profile packs, and idiom indexes genuinely differ. Heuristic: split if crossing the boundary means a different *process*; keep together if it's a different *language in the same process*."
+> **Size by audit-surface, not raw LOC.** The 1–4k figure is calibrated to
+> Rust/TS density. Convert via a verbosity factor, or — preferred — size by
+> **build-unit + semantic cohesion**: one coherent subsystem that fits in a single
+> reviewer's head, typically **one package/crate, one Go service, one Spring
+> service-triplet, one Django app, or one bounded module-cluster**. As a LOC sanity
+> check, scale the band:
+>
+> | Ecosystem | Sweet-spot (production LOC) |
+> |---|---|
+> | Python / Ruby | ~0.5–2k (denser per feature) |
+> | Rust / TS | ~1–4k (baseline) |
+> | Go / Java / Kotlin / C# | ~2–6k (more ceremony per feature) |
+> | C/C++ | by translation unit + its headers, not LOC |
+>
+> The `~100k → ~10–20 units` rule is a Rust/TS datapoint; expect **more** units in
+> dense ecosystems and **fewer** in verbose ones for the same feature count. Count
+> *features/services*, not lines, when estimating unit count.
+
+This keeps the band as a *sanity check* while making "coherent build-unit" the
+primary sizer — which is what S3 principle 2 already wants but principle 3 overrides
+with a raw number.
+
+---
+
+## §2 — "Language-homogeneous, never mix" fragments polyglot features
+
+### The defect
+S3 principle 1 ("Never mix Rust and TS in one slice") and the §"Heuristics" row are
+stated as an absolute. The stated *reason* is tooling: "the lanes, profile packs,
+and idiom-currency index differ." That is true — I confirmed the sibling skill ships
+**separate packs** for `python`, `go`, `dotnet`, `jvm`, `js-ts`, `rust`, **`sql`**,
+and `html`. But selling a *tooling constraint* as a *partitioning principle* breaks
+coherent-feature auditing in the common polyglot shapes:
+
+- **A FastAPI/Django endpoint with embedded/ORM SQL.** The N+1 query, the missing
+  index, the serialization cost, and the Python loop that drives them are *one
+  performance story*. Forcing the SQL into its own slice (because there's a `sql`
+  pack) and the Python into another **splits the impl from its own frequency
+  driver** — the exact failure S4 warns about, now *induced by S3*. The two
+  principles fight each other.
+- **An RPC handler (Go/Java) whose hot cost is the serialization + DB round-trip.**
+  Same fracture.
+- **A JS/TS frontend feature calling a TS/JS backend** in a monorepo: arguably one
+  product feature, two language slices — defensible, but the method gives no rule
+  for when to keep a frontend/backend pair together as an OVERLAY vs split.
+
+This is the place the Rust-desktop provenance hurts most: in that app, Rust↔TS was a
+*process boundary* (TS UI ↔ Rust core over IPC), so "never mix" happened to coincide
+with a real seam. In a Python-or-Java web service, the languages are **interleaved
+within one call stack**, not across a process boundary — so the same rule cuts
+through the middle of a feature.
+
+### Concrete fix
+Reframe principle 1 from "never mix" to "**one primary language per slice, with
+embedded second languages kept as in-slice context**," and add an explicit polyglot
+rule:
+
+> **1. One primary ecosystem per slice — but keep embedded languages with their
+> driver.** A slice has ONE primary pack (its lanes/idiom-index). Embedded second
+> languages that are *driven by* the primary code — SQL in an ORM/query layer,
+> a shader, an inline regex/template — stay in the slice as **adjacent context**;
+> run the SQL pack as a sub-lane rather than carving a separate SQL slice that
+> would be split from its caller (this is an S4 impl/caller split you induced —
+> don't). Carve a separate-language slice only at a **real process/deploy boundary**
+> (UI↔backend IPC, service↔service, app↔external engine). For a polyglot *feature*
+> that genuinely spans a process boundary, prefer an **OVERLAY** to recover the
+> end-to-end cost rather than pretending the per-language slices capture it.
+
+This resolves the S3-vs-S4 contradiction and matches how the tooling actually
+works (SQL is a sub-pack you can apply within a Python/Java slice).
 
 ---
 
-## Failure 3 — The hot-path / reachability model (S2) silently assumes CPU-bound, single-process, real-time execution
+## §3 — S2 hot-path model assumes CPU-bound, in-process, statically-dispatched code
 
-**The leak.** S2's vocabulary — "inner loops," "real-time callbacks," "per-frame," "allocation/IO on those paths," "canvas/`requestAnimationFrame`" — is a *desktop real-time app's* mental model of "hot." Its examples of hotness are CPU loops and render frames. For the dominant server/cloud shapes, "hot" means something different, and an operator running S2 by its examples would **build an imaginary hot-path map** the way the doc warns against:
+### The defect
+S2's signals are: "entry points (request/render/frame/message handlers, inner loops,
+real-time callbacks), allocation/IO on those paths, and **call-graph sketches**,"
+plus "VERIFY hot-path against code (grep for the loop/canvas/RAF/query)." This is a
+**compiled-real-time-app worldview**. Three ways it fails to generalize:
 
-- **IO-bound web services (Django/FastAPI/Rails/Spring/Express).** The cost is **not** CPU loops — it's the **N+1 query, the synchronous external HTTP call in a request handler, the un-cached serialization, the connection-pool/GIL/thread-pool contention, the chatty ORM.** "Inner loop" hotness is usually a red herring here; a tight Python loop is rarely the bottleneck next to one blocking DB round-trip. S2 names IO "on those paths" but subordinates it to loops; for services the ranking should invert.
-- **Event-driven / async / serverless.** "Hot path" is **per-event / per-invocation**, and a serverless function adds **cold-start, package size, and per-invocation init** as first-class perf axes that the desktop model has no slot for. The frequency unit is "per request × QPS," set by infra/traffic config that **isn't in the repo at all** — so S2's "verify against code, never infer from names" needs a companion: "frequency often lives in deploy/infra config (autoscaling, queue concurrency, cron schedules), not the code — read it too."
-- **Dynamic dispatch breaks the call-graph/reachability premise.** S2 and S4 both lean on "call-graph sketches" and "no in-tree callers ⇒ latent/dead." In **Python/Ruby/JS** (duck typing, monkey-patching, `getattr`, decorators, dependency-injection, reflection, dynamic `import`), and in **Spring/.NET DI** (wiring by annotation/config, not by static call edge), **"no in-tree caller" does NOT imply dead code** — the caller is the framework, resolved at runtime. The Rust LDPC-crate example ("zero callers ⇒ reachability ≈ 0") is *only sound in a statically-dispatched language*. Applied to a Django view, a Celery task, a Spring `@Component`, or a JS route module, it would mis-rank live, hot, framework-invoked code as dead. This is a correctness bug in the method for dynamic/framework ecosystems, not just a style nit.
-- **Data/ML repos.** "Hot path" is a **pipeline DAG stage / a vectorized kernel / a data-volume-driven step**, and notebooks have *no_ stable entry points or call graph at all. S2 has no model for "cost scales with data volume, not call frequency."
+**(a) "Hot path" ≠ CPU loop for IO-bound services.** In Django/FastAPI/Rails/Spring
+and most Go/Node services, the dominant cost is **IO: DB round-trips, N+1 queries,
+cache misses, external HTTP fan-out, serialization** — not inner loops. An agent
+grepping "for the loop/canvas/RAF" will *miss* the real hot path, which is a
+one-line ORM access inside a request handler that fans out to N queries. The
+`requestAnimationFrame`/canvas examples are pure desktop-render provenance and are
+noise in a web/service audit.
 
-**Concrete fix.** Add an ecosystem dimension to S2:
-1. **Generalize the "hot" definition explicitly:** "**'Hot' is workload-relative.** CPU-bound/real-time: inner loops, per-frame/per-message callbacks, allocation. **IO-bound services: per-request DB queries (N+1), blocking external calls, serialization, pool/GIL/thread contention — rank these above CPU loops by default.** Event-driven/serverless: per-event cost **plus** cold-start/init/package-size. Data/ML: per-data-volume pipeline stages and vectorized kernels. Identify which regime the slice is in *before* mapping, and use that regime's cost vocabulary."
-2. **Add a dynamic-dispatch caveat to the latent/dead-code rule:** "**'No in-tree caller ⇒ dead' is sound ONLY under static dispatch.** In dynamic languages (Python/Ruby/JS reflection, monkey-patching, decorators) and DI/annotation frameworks (Spring, .NET, Django/Celery/FastAPI routing), the caller is the **framework or runtime**, resolved dynamically — absence of a static call edge does NOT mean dead. Before tiering something latent, check for framework registration (route tables, `@Component`/`@app.task`/decorator, DI config, entrypoint manifests, dynamic-dispatch sites)."
-3. **Frequency-lives-outside-the-code note for S2/S4:** "In services/serverless, the frequency multiplier (QPS, queue concurrency, autoscaling, cron cadence) often lives in **deploy/infra config, not source** — read it as adjacent context; don't infer frequency from code alone."
+**(b) Call-graph sketches are unreliable in dynamic / DI / event-driven code.**
+S2 and the latent-code test both lean on "in-tree callers" / call-graph reachability:
+- **Python/Ruby dynamic dispatch**, duck typing, decorators, signals
+  (Django signals, Rails callbacks), and string-keyed dispatch make static
+  call-graph sketches *systematically incomplete*. "No in-tree callers" is NOT a
+  reliable dead-code signal — the caller may be a framework registry, a URL router,
+  a Celery/Sidekiq task name, a webhook, or reflection.
+- **Spring/.NET DI**: the "caller" is the container; annotations (`@Scheduled`,
+  `@EventListener`, `@KafkaListener`) wire entry points invisibly to grep.
+- **Serverless/event-driven**: entry points are *event bindings* (queue messages,
+  cron, HTTP triggers) declared in config/IaC (`serverless.yml`, SAM, function
+  manifests), not in code call-graphs. Frequency is set by the event source.
+
+**(c) Frequency/reachability is often set OUTSIDE the code** — by request rate,
+queue depth, cron schedule, fan-out factor — not by an in-tree loop count. S4 handles
+*in-tree* impl/caller splits; it has no concept of an *out-of-tree* frequency driver
+(traffic, schedule, queue).
+
+### Concrete fix
+Add an ecosystem-classification bullet to S2 and broaden the hot-path taxonomy:
+
+> **Classify the workload shape first (it changes what "hot" means):**
+> - **CPU-bound / real-time** (desktop, games, codecs, data kernels): hot path =
+>   inner loops, allocation, frame/callback handlers. (The original signals apply.)
+> - **IO-bound services** (web, RPC, most microservices): hot path = **DB round-trips,
+>   N+1 / unbatched queries, cache misses, external-call fan-out, serialization**,
+>   sized by request/throughput rate — NOT inner loops. Grep for ORM access in
+>   handlers, query-in-loop, `await` fan-out, missing batching — not for `for`/RAF.
+> - **Event-driven / serverless**: entry points live in **config/IaC** (queue/cron/
+>   HTTP bindings), not the call graph. Read the manifest to find entry points and
+>   their frequency (queue rate, cron cadence).
+>
+> **Dynamic-dispatch caveat:** in Python/Ruby/JS and DI frameworks (Spring/.NET),
+> static call-graph sketches are *incomplete* — framework registries, decorators,
+> signals, annotations, and routers wire callers invisibly. **Do not treat "no
+> in-tree caller" as dead code** without checking framework wiring (routers, DI
+> config, task registries, event bindings). Reachability here is a framework-config
+> question, not a grep.
+
+And extend S4 with an **out-of-tree frequency** note:
+
+> Frequency may be set *outside the codebase entirely* — request rate, queue depth,
+> cron cadence, fan-out factor. Capture these in the frequency-map pre-artifact as
+> first-class inputs (from load context / IaC), not just in-tree call counts.
 
 ---
 
-## Secondary leaks (caveat-level, not structural)
+## §4 — "The repo" is the wrong audit unit for service monorepos
 
-- **"External-process boundaries ⇒ reduced tier" needs widening to be useful for services.** The rule's example is a TNC/DSP child process — but for *every* web service the most important "external process" is **the database engine and downstream services.** The method should say plainly: "For typical services this boundary is the **DB and downstream RPCs** — the audited code is query *construction* and IO orchestration; the compute is in the engine. This is the **common** case, not an exotic one — but **'reduced tier' does not mean low-impact**: the N+1 *pattern* in the orchestration code is often the single highest-impact finding even though the cycles are spent elsewhere." As written, "reduced tier" risks down-ranking the exact code where service perf is won.
-- **"Single binary" assumption in S6 commit/ledger discipline** is fine, but the **OVERLAY** concept ("a hot pipeline spans several slices") should explicitly cover **cross-service request paths** (a request fanning through 5 microservices) — the highest-value overlay in a service monorepo, and one the desktop framing wouldn't surface.
-- **Idiom-currency / payload-startup lanes**: "payload/startup" maps beautifully to serverless cold-start and SPA bundle size — the method should *say* so (it's a strength left implicit), and note that for backend services "startup" is usually irrelevant while "payload" becomes "response/serialization size."
-- **C/C++ build-unit**: S1 lists manifests but C/C++ has none of that flavor — add "for C/C++, the build unit is the **translation unit / CMake or Bazel target**, and headers are declaration-shared across units (don't double-count a header's LOC into every includer)."
-- **Notebooks/data-ML**: explicitly list as a recognized shape with its own caveats (no call graph, output-cell LOC inflation, data-volume-driven cost) or scope them out by name — right now they fall through every assumption silently.
+### The defect
+The method implicitly treats **one repo = one partition = one coverage ledger**.
+S1 enumerates "packages/crates/modules/apps," and the worked example is a single
+deployable app. It has no first-class concept of **the deployable service** as the
+audit boundary, which is the natural unit for:
+- A **Go monorepo of N microservices** (`cmd/svc-a`, `cmd/svc-b`, shared `pkg/`).
+- A **Java/Kotlin multi-module Gradle** build or a **.NET solution of many `.csproj`**.
+- An **Nx/Turborepo JS/TS monorepo** with dozens of publishable packages + apps.
+
+For these, the right structure is **per-service partitions that each get their own
+slice plan + ledger + run history**, with shared libraries (`pkg/`, shared packages)
+audited *once* and referenced — not re-sliced per consumer (double-counting) and not
+dropped (coverage gap). And cross-*service* frequency is set over the **network**
+(service A calls service B's endpoint M times/request), which the in-tree-only S4
+cannot see.
+
+### Concrete fix
+Add an S1 sub-step and an S4 extension:
+
+> **S1 — pick the partition root.** For a service monorepo (multiple deployables in
+> one repo), the audit unit is the **deployable service**, not the repo. Produce a
+> service inventory first; run a *separate* slice plan + coverage ledger + run
+> history per service. **Shared libraries** consumed by multiple services are
+> audited ONCE as their own slice and *referenced* by each service plan (record in
+> the coverage ledger as shared, so it's neither re-sliced per consumer nor dropped).
+>
+> **S4 — cross-service frequency** is set over the network: service A may call
+> service B's endpoint N×/request. Capture inter-service call frequency in the
+> frequency-map (from API contracts, client code, or tracing) the same way you
+> capture in-tree caller frequency.
 
 ---
 
-## Do the sizing bands/heuristics need ecosystem scaling? — Yes, unambiguously.
+## §5 — Smaller provenance leaks (caveat-level, not structural)
 
-The header literally says "tune per ecosystem" but provides **no tuning axis and no per-ecosystem numbers**, and the body states the bands as bare constants — so in practice an operator will use 1–4k everywhere. That's a documentation defect: the disclaimer is non-actionable. The fix is a small **density/regime table** so the tuning is concrete rather than aspirational:
-
-| Ecosystem | Slice band (production LOC) | First partition | "Hot" regime | Dead-code-by-no-caller? |
-|---|---|---|---|---|
-| Rust / C / C++ | ~1–4k | by crate/module/TU | CPU/real-time | Yes (static) |
-| Java/Kotlin Spring, C#/.NET | ~1–4k **after stripping DI/annotation glue** | by service/project | IO-bound + DI | **No** — framework-wired |
-| Python (Django/FastAPI), Ruby/Rails | **~0.7–2k** (denser) | by app/service | IO-bound (N+1, blocking IO) | **No** — dynamic/decorators |
-| JS/TS monorepo | ~1–3k **after excluding codegen** | **per package/workspace** | IO + bundle/cold-start | **No** — dynamic/routing |
-| Go services | ~1–3k **after err-glue** | **per service** | IO + concurrency | Mostly (but check DI/registry) |
-| Data/ML / notebooks | size by **pipeline stage / kernel**, not LOC | per pipeline/DAG | data-volume-driven | N/A (no call graph) |
+- **"Cold glue" taxonomy** ("CRUD, IPC marshalling, config, string assembly, form
+  rendering") is desktop-flavored. In Spring/.NET the equivalent cold bulk is
+  **DI wiring, annotation glue, DTO mapping, boilerplate getters** — and there is a
+  LOT of it, so the COLD SWEEP is *more* valuable there, but the examples don't name
+  it. Add JVM/.NET examples to the cold-glue list so the agent recognizes it.
+- **"External-process boundary → reduced tier"** generalizes beautifully (it's the
+  DB/cache/queue/external-API case for web services — the audited code is
+  orchestration, the compute is in Postgres/Redis). But the *example* (modem DSP →
+  external TNC) is opaque to a web auditor. Add the web example explicitly:
+  "an ORM call is orchestration; the query plan executes in the DB — reduced tier on
+  the app code, and read the query, not just the Python."
+- **Verification mode / hardware-deferred** (S5): generalizes well but the framing is
+  radio-specific. The web analogue is "needs a load test / a production-like dataset /
+  a staging service that doesn't exist locally." Add it so the agent doesn't think
+  hardware-deferred only means physical devices.
+- **Data/ML repos** (notebooks, pipelines) are unaddressed entirely. Notebooks aren't
+  "production LOC" in the usual sense; the hot path is often a single pandas/Spark
+  op or a data-loader, and "build units" are DAG stages, not packages. At minimum add
+  a one-line caveat that notebooks/pipelines need a DAG-stage partition, not a
+  package partition, and that cell-level execution order replaces the call graph.
 
 ---
+
+## Does the sizing band / heuristic set need ecosystem scaling? — YES.
+
+Concretely: the LOC band needs a **verbosity axis** (§1 table), the homogeneity rule
+needs a **process-boundary qualifier** (§2), and the hot-path map needs a
+**workload-shape classifier** (§3). Without these three, an agent applying the doc
+verbatim to a Django or Spring repo will (a) make over-coarse slices, (b) split SQL
+from its driver, and (c) hunt for CPU loops while the real cost is an N+1 query —
+three independent ways to produce a confidently-wrong partition.
 
 ## Top edits to make it ecosystem-agnostic (priority order)
 
-1. **Add the density/regime table above** (and reframe the band as a *derived working-memory budget*, scaled by language density, with a function-count fallback ~15–40 non-trivial functions/handlers per slice). Fixes Failure 1's core. This is the single highest-leverage edit.
-2. **Add a build-unit-first / per-service-or-package partition rule** for service & package monorepos (Go, JS/TS, .NET): the deploy/publish boundary is the *first* cut; never LOC-slice across it. Fixes Failure 1's "is the repo one audit?" gap.
-3. **Rewrite S3 principle 1 from "language-homogeneous" to "lane-set + runtime-homogeneous"**, with an explicit *keep embedded SQL/GraphQL/asm with its host* carve-out and a *split on process/deploy boundary* rule. Fixes Failure 2.
-4. **Add the dynamic-dispatch caveat to the latent/dead-code rule** ("no static caller ⇒ dead" is static-dispatch-only; check framework registration/DI/decorators/routing first). This is the method's one outright *correctness* bug outside Rust — highest-severity fix even if lower leverage than #1.
-5. **Generalize S2's definition of "hot"** into named regimes (CPU/real-time · IO-bound service · event-driven/serverless · data-volume), invert the loops-over-IO ranking for services, widen "external process ⇒ reduced tier" to "DB + downstream RPC = the common case, reduced-tier ≠ low-impact," and note that frequency often lives in deploy/infra config, not source.
+1. **§3 — add a workload-shape classifier to S2** (CPU-bound vs IO-bound vs
+   event-driven) and the dynamic-dispatch / "no-in-tree-caller-isn't-dead-code"
+   caveat. *Highest impact:* without it the hot-path map is wrong for the entire
+   web/service class — which is most repos this will ever touch.
+2. **§2 — reframe "language-homogeneous, never mix" → "one primary pack, embedded
+   languages stay with their driver; split only at process/deploy boundaries."**
+   Resolves the live S3-vs-S4 contradiction; matches the SQL-sub-pack reality.
+3. **§1 — replace the bare 1–4k band with build-unit-primary sizing + a verbosity
+   multiplier table**, and demote the LOC band to a sanity check. Make "coherent
+   build-unit/service" the primary sizer (S3-principle-2 already wants this).
+4. **§4 — make the deployable service (not the repo) the partition root for service
+   monorepos**, with shared-lib-audited-once + cross-service (network) frequency in S4.
+5. **§5 — de-provenance the examples:** add web/JVM/.NET analogues for cold glue,
+   external-process boundary, and verification mode; add a one-line data/ML caveat.
 
-Bundling #1+#2 into the sizing section, #3 into S3, #4+#5 into S2, plus the secondary-leak caveats, makes the method ecosystem-agnostic without disturbing the (excellent) phase skeleton or the S4 calibration insight that is its real contribution.
+**Net:** the method is structurally sound and worth generalizing — the skeleton is
+its real contribution. But as written it is a *Rust-desktop instantiation* wearing a
+"tune per ecosystem" disclaimer it doesn't honor. The five edits above convert the
+disclaimer into actual ecosystem tuning without touching the (excellent) control flow.
