@@ -141,3 +141,79 @@ within each category. Author: glade-knoll-shoal.
   cross-references are exactly what the finding-reference rule forbids, and it's
   an easy trap when drafting a multi-phase method. Fixed by renaming every phase
   to a descriptive self-contained title and rephrasing all cross-refs.
+
+## Plan generation + plan-review (writing-plans-enhanced, plan-review-cycle) — M1
+
+- 👍 **The plan-review-cycle earns its place — it caught a BLOCKING defect the
+  plan-writer missed.** writing-plans-enhanced produced a thorough 12-task plan
+  (disposition discipline held: all P1–P12 scheduled, empty Deferred appendix,
+  per-task verification gates). But the plan-review (subagent-readiness lens)
+  found Task 9's "no-dep lock-free callback" design **would not compile**
+  (`Arc<Vec<f32>>` has no interior mutability) — plus a public-API break (Task 6)
+  and drifted constructor line-refs (Task 1). i.e. the review is not ceremony; on
+  a first real plan it found a compile-error, an API-contract violation, and
+  navigational drift. Strong argument for keeping the review gate mandatory.
+- 🟡 The plan-review found ~22 integration test files where the plan said "~6" —
+  the writer under-counted the existing guard surface. Minor, but: the plan
+  step "ADD bit-exact goldens" was right anyway (existing assertions are weak).
+
+## Reduced-depth tier (M3) — validation + a gap
+
+- 👍 **Calibration held on a low-throughput path.** M3 (ARDOP, external-TNC I/O)
+  came back ALL-MINOR across 4 lanes — the lanes did NOT inflate the byte-by-byte
+  `VecDeque` drain into a CRITICAL, because the load context (low HF data rates,
+  radio airtime is the bottleneck) correctly bounded Impact. This is the
+  finding-model's reachability/frequency axis doing real work, and it vindicated
+  the round-2 decision to demote M3 from full→reduced (a full cycle would have
+  found nothing more).
+- 🟡 **"Reduced depth" is not a first-class skill mode — I improvised it.** I ran
+  a 4-lane subset (algorithmic/memory/data-access/concurrency) and for R9 a
+  frontend-tuned subset (react-idioms/algorithmic/data-access/cost-map). The
+  skill's lane table is all-or-(6-core); a blessed "reduced" lane-subset mode
+  (with guidance on which lanes to keep per slice class) would make the
+  whole-repo-multiple-runs use-case cheaper and more consistent. (The
+  whole-repo-scoping method doc now encodes this, but the underlying
+  performance-audit skill doesn't expose it.)
+
+## Calibration-from-source (R9) — a real strength
+
+- 👍 **Lanes corrected the dispatcher's load assumption by reading the code.** I
+  briefed R9's lanes "periodic re-render is ~1 Hz." Three independent lanes read
+  the Rust backend and corrected it to **4 Hz** (`modem_status.rs:355`), then
+  re-ranked accordingly. The "your reading of the actual code is primary" rule in
+  the shared preamble is load-bearing — it makes the audit robust to a wrong
+  scope summary. Worth the skill calling this out as an expected, desirable
+  behavior (lanes MAY correct the scope summary's load claims, and the synthesis
+  should record the correction — which I did in the consolidated frontmatter).
+
+## Cross-unit coherence + a whole-repo gap
+
+- 👍 **Independent units converged on the same root.** M3's `modem_status`
+  4 Hz broadcaster ↔ R9's 4 Hz whole-panel re-render cascade ↔ R9's badge-poll
+  IPC are the same system surface seen from the backend and frontend slices —
+  they corroborate without coordination.
+- 🟡 **No cross-run synthesis step exists.** `performance-audit` synthesizes
+  WITHIN one run; `performance-audit-cycle` plans WITHIN one scope. For a
+  whole-repo run across many slices, there's no skill-level "roll up themes
+  across all the slice reports" phase — the coherence above I had to notice
+  manually. The whole-repo-scoping method doc's two-level roll-up addresses this
+  at the method layer; the cycle could grow an optional final cross-slice
+  synthesis.
+
+## Reachability axis (latent M2 / dev-only M5) — handled well
+
+- 👍 The finding model's `reachability` dimension cleanly handled two
+  non-standard cases: M2 (latent — zero live callers; findings tagged "fires once
+  FEC is wired in") and M5 (dev-only tool — calibrated to sweep wall-time, not
+  shipped runtime). Lanes did not scream CRITICAL on dead/dev code. The model
+  generalizes past the "live request path" framing its examples assume.
+
+## version-index coverage gap (idiom-currency)
+
+- 🟡 The shipped `version-indexes/rust.md` is **build-config-centric** and carries
+  **zero rustfft / num-complex entries**; there is no React index. So the
+  idiom-currency lane fell back to model API-knowledge for the DSP (M1/M5) and
+  React (R9) stacks. The lane still produced strong findings (rustfft planner
+  reuse, `process_with_scratch`, React memo/virtualization), but flagged that the
+  index didn't help. Library-API perf entries (not just toolchain/build flags)
+  would make idiom-currency more grounded for these ecosystems.
