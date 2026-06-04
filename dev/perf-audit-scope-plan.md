@@ -2,120 +2,119 @@
 
 > Purpose: slice the tuxlink repo into bounded scope slices, each suitable for
 > ONE `performance-audit-cycle` run, collectively covering the whole repo.
-> Subject to a mandatory **two-round adversarial review** before any audit run
-> executes.
+> Subject to a mandatory **≥5-round adversarial review** before any audit run
+> executes. See `dev/perf-audit-review-log.md` for the round-by-round record.
 
 ## Revision history
 
-- **v1** (commit 43b7fc4) — initial 22-slice partition. Flaws found by Round 1
-  adversarial review (Claude subagent, agent glade-knoll-shoal): sized on raw
-  LOC (incl. inline `#[cfg(test)]`, `.test.tsx`, `.css`) ≈ 2× production;
-  hallucinated a frontend "waterfall/spectrum render hot path" that does not
-  exist; mis-ranked modem-ARQ and grib as hot.
-- **v2** (this) — re-sized on production LOC, corrected hot-path map, slices by
-  perf-relevance, batches cold glue, adds the omitted real-time audio path +
-  live-RX pipeline overlay, closes coverage gaps. 22 → 5 full + 1 overlay +
-  9 reduced-depth + 1 cold sweep. **Awaiting Round 2 (Codex / independent
-  engine).**
+- **v1** (43b7fc4) — initial 22-slice partition.
+- **v2** (b21cfbe) — Round 1 (Opus): sized on production LOC, killed the
+  nonexistent frontend "render hot path," sliced by perf-relevance, batched cold
+  glue, added the omitted real-time audio path + live-RX overlay. 22 → 16 units.
+- **v3** (this) — Round 2 (Opus): fixed `wizard.rs` coverage gap; added two
+  missed PHY hot paths (H1 per-subcarrier alphabet rebuild, H7 narrow-FSK
+  per-call FFT planner); demoted M3 (ARDOP) full→reduced (verified external-TNC
+  I/O); promoted the storage backend out of the cold sweep (native_mailbox
+  read-amplification); corrected two soft claims. **Round 3 pending.**
 
-## Slicing principles (v2)
+## Slicing principles (v3)
 
-1. **Language-homogeneous** slices — Rust and TS never mix (different lanes /
-   profile packs).
-2. **Size on PRODUCTION LOC** — exclude inline `#[cfg(test)]` modules, `.test.*`,
-   `.css`. Verified: raw ≈ 2× production (e.g. `tuxmodem-phy` 1760 prod / 1358
-   test; `winlink/modem` ~4.5k prod / ~4.6k test). Most v1 "oversized" flags
-   dissolve once measured correctly.
+1. **Language-homogeneous** slices — Rust and TS never mix.
+2. **Size on PRODUCTION LOC** (exclude inline `#[cfg(test)]`, `.test.*`, `.css`).
+   The prod:test ratio is **not uniform** — measured per-file range ~0.10×–6.89×
+   (`lzhuf.rs` ~90% production; `ax25/datalink.rs` ~87% test). Measure each
+   slice; do not assume a flat 2×.
 3. **Slice by perf-relevance, not raw size.**
-4. **No frontend render hot loop exists** — verified: zero `canvas` / `getContext`
-   / `WebGL` and only one one-shot `requestAnimationFrame` (`help/ReadingPane.tsx:41`
-   scroll-into-view) in all of `src/`. Tier E is warm/cold UI, never a render
-   hot path.
+4. **No frontend render hot loop exists** (verified: zero `canvas`/`getContext`/
+   `WebGL`; one one-shot `requestAnimationFrame` at `help/ReadingPane.tsx:41`).
+   Tier E is warm/cold UI.
 5. **Complete coverage**; test/bin/probe harnesses explicitly out-of-scope.
-6. **Live-RX/TX pipeline** is an analysis overlay, not a slice (the dominant cost
-   compounds across the A-tier slice boundary).
+6. **Live-RX/TX pipeline** = analysis overlay, not a slice.
 
-## Corrected hot-path map (Round 1 + verified)
+## Corrected hot-path map (Rounds 1–2 + verified)
 
-| Where | Evidence | Rank |
-|-------|----------|------|
-| OFDM per-symbol FFT **replanning** + per-symbol allocs | `tuxmodem-phy/src/ofdm_main/receiver.rs::demodulate_one_symbol` (fresh `FftPlanner` + replan every symbol, per-symbol `Vec`/`HashSet`/`Mapper`); `transmitter.rs::modulate_one_symbol` (same) | **Critical** |
-| LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (msg-passing `incoming` vecs allocated inside the `max_iters` loop) | **Critical** |
-| Frame-sync sliding cross-correlation | `tuxmodem-phy/src/sync/preamble.rs::scan` O(sig×template) | Major |
-| Real-time audio callback / ring buffer | `tuxmodem-phy/src/audio_device.rs` (CPAL stream; sets the real-time deadline) — **omitted from v1** | Major (deadline) |
-| Equalizer per-symbol alloc + interpolation | `tuxmodem-phy/src/ofdm_main/equalizer.rs::equalize` | Secondary |
-| Search index/extract loops | `src-tauri/src/search/extractor.rs:281,371` + SQLite FTS | Warm |
-| LZHUF compression | `winlink/lzhuf.rs::compress`/`insert_node` (real algo, fixed arrays, ~once per message → low frequency) | Modest |
+| # | Where | Evidence | Rank | Slice |
+|---|-------|----------|------|-------|
+| H0 | OFDM per-symbol FFT **replanning** + per-symbol allocs | `tuxmodem-phy/.../receiver.rs::demodulate_one_symbol` (fresh `FftPlanner`/symbol, per-symbol `Vec`/`HashSet`/`Mapper`); `transmitter.rs::modulate_one_symbol` | Critical | M1 |
+| **H1** | **Per-subcarrier alphabet rebuild in LLR** | `constellations.rs::compute_llr:142` calls `self.alphabet()` (up to 64 nested `map()` allocs), invoked **once per data subcarrier** at `receiver.rs:83` — nested alloc in the RX demod inner loop, worse than the per-symbol planner | Critical | M1 |
+| H2 | LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (`incoming` vecs inside the `max_iters` loop) | Critical | M2 |
+| H3 | Frame-sync sliding cross-correlation | `tuxmodem-phy/src/sync/preamble.rs::scan` O(sig×template) | Major | M1 |
+| H4 | Real-time audio callback / ring buffer | `tuxmodem-phy/src/audio_device.rs` (CPAL stream; real-time deadline) | Major (deadline) | M1 |
+| H5 | Equalizer per-symbol alloc + interpolation | `ofdm_main/equalizer.rs::equalize` | Secondary | M1 |
+| **H7** | **Narrow-FSK per-call FFT planner** | `robustness_floor/narrow_fsk.rs:83` builds a fresh `FftPlanner` per call — same anti-pattern as the OFDM path, previously only flagged for OFDM | Major | M1 |
+| H6 | Search index/extract loops | `src-tauri/src/search/extractor.rs:281,371` + SQLite FTS | Warm | M4 |
+| H8 | **Mailbox list read-amplification** | `native_mailbox.rs::list:99-104` does `read_dir` + `fs::read(body)` **per message** to list a folder — N+1 / read-amplification; backend root of the non-virtualized `MessageList` symptom | Warm | R10 |
+| H9 | hf-sim per-call FFT planner | `hf-channel-sim/src/fading.rs:49,86` + `analysis.rs:50` re-plan per call (only `channel.rs` caches) | Warm | M5 |
+| H10 | LZHUF compression | `winlink/lzhuf.rs::compress`/`insert_node` (real algo, fixed arrays, ~once/message → low frequency) | Modest | R3 |
 
-**Refuted as hot (verified):** frontend render (no canvas/RAF); `winlink/modem`
-ARQ (DSP runs in external `ardopcf`/VARA TNC process — this code is TCP plumbing
-+ state machine); `src-tauri/src/grib` (composes a request *string*, no binary
-decode); `tuxmodem-tx`/`tuxmodem-rx` crates (thin CLI drivers that call A1/A3);
-`hf-channel-sim` per-sample loop *caches* its FftPlanner (unlike PHY).
+**Refuted as hot (verified):** frontend render; `winlink/modem` ARQ (DSP runs in
+external `ardopcf`/VARA child — `process.rs:74`; this code is TCP plumbing +
+framing + state machine); `src-tauri/src/grib` (composes a request string);
+`tuxmodem-tx`/`rx` crates (thin CLI drivers).
 
 ---
 
 ## Slices
 
-### MUST-DO — full 8-phase cycle (5 + 1 overlay)
+### MUST-DO — full 8-phase cycle (4 + 1 overlay)
 
 | ID | Slice | Paths | Why full |
 |----|-------|-------|----------|
-| **M1** | OFDM PHY + real-time audio | entire `tuxmodem/crates/tuxmodem-phy/src` (ofdm_main/, sync/, equalizer, constellations, coded_modulation, robustness_floor/, subcarrier_snr, **audio_device.rs**, audio_io.rs, phy_api, modes) | Marquee FFT-replanning + per-symbol allocs; real-time deadline |
-| **M2** | FEC (LDPC) | `tuxmodem-fec/src` | Densest compute in repo; per-iteration allocs |
-| **M3** | ARDOP modem transport | `winlink/modem/ardop/*` (transport.rs 823, session.rs, listener.rs, data.rs) | Real-time-adjacent buffering + socket I/O throughput |
-| **M4** | Search backend | `src-tauri/src/search/` | SQLite FTS + `extractor.rs` substring/line loops — the one warm backend |
-| **M5** | HF channel simulator | `hf-channel-sim/src` | Offline per-sample DSP (`channel.rs::process_block`); lower urgency but genuine |
-| **O1** | **Live RX/TX pipeline overlay** (analysis, NOT a code slice) | reconcile M1+M2: `audio_device`→`demodulate_one_symbol`→`Decoder::decode` per-symbol alloc budget vs audio frame deadline; TX mirror | Per-slice audit misses the compounding end-to-end cost; run after M1 & M2 |
+| **M1** | OFDM PHY + real-time audio | entire `tuxmodem/crates/tuxmodem-phy/src` (ofdm_main/, sync/, equalizer, **constellations**, coded_modulation, robustness_floor/, subcarrier_snr, **audio_device.rs**, audio_io.rs, phy_api, modes) | Marquee FFT-replanning (H0), per-subcarrier alphabet rebuild (H1), narrow-FSK planner (H7), real-time deadline (H4) |
+| **M2** | FEC (LDPC) | `tuxmodem-fec/src` | Densest compute; per-iteration allocs (H2) |
+| **M4** | Search backend | `src-tauri/src/search/` | SQLite FTS + `extractor.rs` substring/line loops (H6) |
+| **M5** | HF channel simulator | `hf-channel-sim/src` | Offline per-sample DSP; per-call FFT planners in `fading.rs`/`analysis.rs` (H9). **Down-ranked** below M4 (offline, no deadline) |
+| **O1** | **Live RX/TX pipeline overlay** (analysis, not a code slice) | reconcile M1+M2 per-symbol alloc budget (`audio_device`→`demodulate_one_symbol`→`compute_llr`→`Decoder::decode`) vs audio frame deadline; TX mirror | compounding end-to-end cost; run after M1 & M2 |
 
-### NICE-TO-HAVE — reduced-depth cycle (lanes: algorithmic-complexity, allocation, data-access, + concurrency where threads exist; skip framework-currency/payload/startup)
+### REDUCED-DEPTH cycle (lanes: algorithmic, memory/allocation, data-access, concurrency where threads exist; skip idiom-currency/payload/startup unless flagged)
 
-| ID | Slice | Paths |
-|----|-------|-------|
-| **R1** | Modem TX/RX CLI orchestration | `tuxmodem-tx/src` + `tuxmodem-rx/src` (thin) |
-| **R2** | Rig / PTT control | `tux-rig-rts/src` + `tux-rig-cm108/src` (PTT, watchdog timing) |
-| **R3** | Compression + B2F assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` |
-| **R4** | VARA + shared modem | `winlink/modem/vara/*`, `modem/mod.rs`, `process.rs` |
-| **R5** | AX.25 datalink | `winlink/ax25/` |
-| **R6** | Telnet / P2P transport | `winlink/telnet.rs`, `telnet_listen.rs`, `telnet_p2p*.rs`, `relay_banner.rs` |
-| **R7** | P2P listener gate | `winlink/listener/` (decide, packet_gate, allowed_stations, station_password, arms_record) |
-| **R8** | B2F session driver | `winlink/session.rs`, `handshake.rs`, `credentials.rs`, `secure.rs`, `mod.rs` |
-| **R9** | Warm frontend UI | `src/radio/` (1 Hz sparkline tick churn, `useSampleHistory`) + `src/mailbox/` (`MessageList.tsx` non-virtualized large-mailbox scaling, `messageSort.ts`) |
+| ID | Slice | Paths | Focus |
+|----|-------|-------|-------|
+| **M3** | ARDOP modem transport (**demoted from full**) | `winlink/modem/ardop/*` (transport.rs, session.rs, listener.rs, data.rs) | concurrency (split-borrow hazard `transport.rs:666`) + alloc + socket I/O; DSP is external-TNC |
+| **R1** | Modem TX/RX CLI orchestration | `tuxmodem-tx/src` + `tuxmodem-rx/src` (thin) | |
+| **R2** | Rig / PTT control | `tux-rig-rts/src` + `tux-rig-cm108/src` | watchdog timing, I/O |
+| **R3** | Compression + B2F assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` | lzhuf (H10) |
+| **R4** | VARA + shared modem | `winlink/modem/vara/*`, `modem/mod.rs`, `process.rs` (child-process mgmt; **shared seam with M3** — primary home here) | |
+| **R5** | AX.25 datalink | `winlink/ax25/` | framing/CRC |
+| **R6** | Telnet / P2P transport | `winlink/telnet.rs`, `telnet_listen.rs`, `telnet_p2p*.rs`, `relay_banner.rs` | |
+| **R7** | P2P listener gate | `winlink/listener/` | |
+| **R8** | B2F session driver | `winlink/session.rs`, `handshake.rs`, `credentials.rs`, `secure.rs`, `mod.rs` | |
+| **R9** | Warm frontend UI | `src/radio/` (1 Hz sparkline churn, `useSampleHistory`) + `src/mailbox/` (`MessageList.tsx` non-virtualized, `messageSort.ts`) | |
+| **R10** | Storage / config backend (**promoted from cold sweep**) | `native_mailbox.rs`, `config.rs`, `user_folders.rs`, `session_log.rs` | mailbox list read-amplification (H8) |
 
 ### DEFER — single batched COLD SWEEP (3 lanes only: complexity + allocation + data-access)
 
 - **Rust cold:** `ui_commands.rs`; `winlink_backend.rs` + `modem_commands.rs` +
-  `modem_status.rs`; `config.rs` + `native_mailbox.rs` + `user_folders.rs` +
-  `session_log.rs`; `forms/` + `grib/` + `position/` + `catalog/`;
-  `bootstrap.rs` + `lib.rs` + `main.rs` + `app_backend.rs` + `compose_window.rs`
-  + `help_window.rs` + `tray.rs` + `consent_gate.rs` + `theme_state.rs`.
+  `modem_status.rs`; `forms/` + `grib/` + `position/` + `catalog/`;
+  `bootstrap.rs` + **`wizard.rs`** (Tauri `WizardMutex` command module — *Rust*,
+  was orphaned in v2) + `lib.rs` + `main.rs` + `app_backend.rs` +
+  `compose_window.rs` + `help_window.rs` + `tray.rs` + `consent_gate.rs` +
+  `theme_state.rs`.
 - **TS cold/warm:** `src/shell/` (warm exception: `markdownRender.ts` +
-  `sanitizeHtml.ts` on large message/help bodies — flag in sweep); `src/search`,
-  `compose`, `packet`, `connections`, `session`, `modem`; `src/wizard`, `forms`,
-  `help`, `grib`, `catalog`; root `App.tsx` + `main.tsx` + `routing.ts`.
+  `sanitizeHtml.ts` on large bodies); `src/search`, `compose`, `packet`,
+  `connections`, `session`, `modem`; `src/wizard`, `forms`, `help`, `grib`,
+  `catalog`; root `App.tsx` + `main.tsx` + `routing.ts`.
 
 ### OUT-OF-SCOPE (documented, not audited)
 
 `test_helpers.rs`, `src-tauri/src/bin/`, `tuxmodem/crates/*/src/bin/`, all
 `*/tests/`, `*/examples/`, every inline `#[cfg(test)]` module, `*.test.tsx`.
 **Measurement gate:** no Criterion benches exist — recommend adding them to
-`tuxmodem-fec` + `tuxmodem-phy` to *measure* the M1/M2 hot-path claims (Phase 4
-of those cycles).
+`tuxmodem-fec` + `tuxmodem-phy` to *measure* M1/M2 claims (Phase 4 of those).
 
 ---
 
 ## Execution order
 
-M1 → M2 → **O1** (pipeline overlay) → M3 → M4 → M5 → R1 → R2 → R3 → R4 → R5 →
-R6 → R7 → R8 → R9 → cold sweep.
+M1 → M2 → **O1** → M4 → M5 → M3 → R10 → R3 → R5 → R6 → R7 → R8 → R4 → R1 → R2 →
+R9 → cold sweep.
 
-**Totals:** 5 full + 1 overlay + 9 reduced + 1 cold sweep = **16 audit units**
-(was 22). Est. dispatch count ~80 (was ~150).
+**Totals:** 4 full + 1 overlay + 11 reduced + 1 cold sweep = **17 units**.
 
-## Coverage ledger (every code dir lands once)
+## Coverage ledger (every code dir/file lands once)
 
 - Rust modem: phy→M1, fec→M2, tx+rx→R1, rig-rts+rig-cm108→R2. ✅
 - hf-channel-sim→M5. ✅
 - winlink: modem/ardop→M3, modem/vara+mod+process→R4, lzhuf+message+compose+proposal+transfer+wire→R3, ax25→R5, telnet*+relay_banner→R6, listener→R7, session+handshake+credentials+secure+mod→R8. ✅
-- src-tauri other: search→M4; ui_commands/winlink_backend/modem_commands/modem_status/config/native_mailbox/user_folders/session_log/forms/grib/position/catalog/bootstrap/lib/main/app_backend/windows/tray/consent_gate/theme_state→cold sweep. ✅
+- src-tauri other: search→M4; native_mailbox+config+user_folders+session_log→R10; ui_commands/winlink_backend/modem_commands/modem_status/forms/grib/position/catalog/bootstrap/**wizard.rs**/lib/main/app_backend/windows/tray/consent_gate/theme_state→cold sweep. ✅
 - src frontend: radio+mailbox→R9; shell/search/compose/packet/connections/session/modem/wizard/forms/help/grib/catalog + root→cold sweep. ✅
