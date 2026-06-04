@@ -23,7 +23,7 @@ each revision). **Execution ledger:** `dev/perf-audit-progress.md`.
 | 1 | Opus subagent | v1 | `round-1.md` | major rework → v2 |
 | 2 | Opus subagent | v2 | `round-2.md` | minor-edits → v3 |
 | 3 | Opus subagent | v3 | `round-3.md` | minor-edits → v4 |
-| 4 | Opus subagent | v4 | `round-4.md` | pending |
+| 4 | Opus subagent | v4 | `round-4.md` | substantive (calibration) → v5 |
 | 5 | Opus subagent | v5 | `round-5.md` | pending |
 
 Convergence rule: continue past 5 only if a round still finds a *substantive*
@@ -125,3 +125,43 @@ winlink protocol family, cold-sweep internals, and frontend.
 Outcome: **17 units unchanged**; corrections are accuracy fixes (one false
 claim removed) + rank/target refinements. Two clean rounds in a row (2 & 3 both
 minor-edits) — convergence emerging; Rounds 4–5 will confirm or break it.
+
+---
+
+## Round 4 — dispositions (v4 → v5)
+
+Full report: `dev/perf-audit-reviews/round-4.md`. Partition-DESIGN lens (a
+different angle from rounds 1–3's hot-path hunting). Verdict: **minor-edits but
+with one substantive defect** — so the round broke the "two clean in a row"
+streak and **vindicates the ≥5-round mandate** (a pure hot-path lens would have
+shipped this bug). All ACCEPTED:
+
+1. **Cross-slice calibration defect (HIGH)** — lzhuf's frequency-establishing
+   caller `winlink_backend.rs::build_outbound_proposals:233,250` (loops the whole
+   Outbox compressing every message) sits in the cold sweep, so R3's lane can't
+   see the call frequency and under-ranks. The plan even mis-attributed the
+   driver to `session.rs`. Fix: **W0 winlink call-frequency-map pre-artifact**
+   handed to R3/R8/R10 as adjacent context + **run R8 before R3**. (Lighter than
+   merging R3+R8, which Round 4 floated as the alternative.)
+2. **Demote R7 (listener gate) reduced→cold** — per-connection consent/auth
+   state, no hot loop (`arms_record` density is doc comments; `fs::read` once per
+   arm). 17→16 units.
+3. **New finding H11** — `transfer.rs::read_block:100-102` per-byte `read_exact`
+   loop (receive-side mirror of the ARDOP `data.rs` drain), consumed at R8
+   frequency. Added to R3.
+4. **Verification-mode flag** — added: M1-H4 (audio), M3, R1 run paths, R2 are
+   hardware-deferred (no rig/TNC/audio → dynamic lane can't run). Explicitly
+   noted **R2's allocation-argument fallback is weak** (no alloc concern), so R2
+   findings are largely unfalsifiable without a rig — to be stated honestly in
+   the R2 report, not over-claimed.
+5. **Keep fine-grained 16, not fewer-larger** — Round 4 steelmanned mega-runs
+   ("all Rust DSP", "all winlink", …) and rejected them: lane precision is the
+   binding constraint rounds 1–3 paid to get; co-locate frequency-with-impl via
+   W0 instead. ACCEPTED.
+6. Minor: reword R1 (not "thin" — 2317 LOC orchestration); narrow R2 to
+   timing-only. ACCEPTED. Shared abstraction check: `num_complex::Complex` is
+   cleanly contained in M1 (no DSP split) — good.
+
+Outcome: 17 → **16 units** (R7 demoted) + W0 pre-artifact. The substantive
+calibration fix is the headline. **Round 5** is a genuine final gate, not a
+rubber stamp.
