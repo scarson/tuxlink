@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en-gb">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="https://simonwillison.net/2024/Apr/8/files-to-prompt/">
+<title>Building files-to-prompt entirely using Claude 3 Opus</title>
+<script defer data-domain="simonwillison.net" src="https://plausible.io/js/plausible.js"></script>
+<link rel="alternate" type="application/atom+xml" title="Atom" href="/atom/everything/">
+<link rel="stylesheet" type="text/css" href="/static/css/all.css">
+<link rel="webmention" href="https://webmention.io/simonwillison.net/webmention">
+<link rel="pingback" href="https://webmention.io/simonwillison.net/xmlrpc">
+<meta name="author" content="Simon Willison">
+<meta property="og:site_name" content="Simon Willison’s Weblog">
+
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://static.simonwillison.net/static/2024/file-to-prompt-card.jpg">
+<meta name="twitter:creator" content="@simonw">
+<meta property="og:url" content="https://simonwillison.net/2024/Apr/8/files-to-prompt/">
+<meta property="og:title" content="Building files-to-prompt entirely using Claude 3 Opus">
+<meta property="og:image" content="https://static.simonwillison.net/static/2024/file-to-prompt-card.jpg">
+<meta property="og:type" content="article">
+<meta property="og:description" content="files-to-prompt is a new tool I built to help me pipe several files at once into prompts to LLMs such as Claude and GPT-4. When combined with my LLM command-line …">
+<meta property="og:updated_time" content="1712608808">
+
+
+
+
+
+<script>
+(function() { // Apply theme immediately to prevent flash
+  const theme = localStorage.getItem('theme');
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+})();
+</script>
+</head>
+<body class="smallhead">
+
+<div id="smallhead">
+  <div id="smallhead-inner">
+    <h1><a href="/">Simon Willison’s Weblog</a></h1>
+    <a id="smallhead-about" href="/about/#subscribe">Subscribe</a>
+  </div>
+</div><!-- #smallhead -->
+
+
+<div id="sponsored-banner" class="sponsor-scheme-sky">
+  <div id="sponsored-banner-inner">
+    <strong class="sponsored-label">Sponsored by:</strong> Teleport &mdash; Connect agents to your infra in seconds with Teleport Beams. Built-in identity. Zero secrets. <a href="https://fandf.co/4tq0sbV" rel="sponsored noopener" target="_blank">Get early access</a>
+  </div>
+</div>
+
+
+<div id="wrapper">
+<div id="primary">
+
+<div class="entry entryPage">
+
+
+<div data-permalink-context="/2024/Apr/8/files-to-prompt/">
+<h2>Building files-to-prompt entirely using Claude 3 Opus</h2>
+<p class="mobile-date">8th April 2024</p>
+
+
+
+<p><a href="https://github.com/simonw/files-to-prompt">files-to-prompt</a> is a new tool I built to help me pipe several files at once into prompts to LLMs such as Claude and GPT-4.</p>
+<p>When combined with my <a href="https://llm.datasette.io/">LLM</a> command-line tool it lets you do things like this:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt README.md files_to_prompt <span class="pl-k">|</span> llm -m opus \
+  --system <span class="pl-s"><span class="pl-pds">'</span>Update this README to reflect this functionality<span class="pl-pds">'</span></span></pre></div>
+<p>I wrote <code>files-to-prompt</code> almost entirely using <a href="https://www.anthropic.com/news/claude-3-family">Claude 3 Opus</a>, <a href="https://github.com/simonw/llm-claude-3">llm-claude-3</a> and <code>files-to-prompt</code> itself, once it was functional enough to be useful.</p>
+<h4 id="building-the-initial-tool">Building the initial tool</h4>
+<p>I started with my <a href="https://github.com/simonw/click-app">click-app</a> cookiecutter template. This can quickly spin up a skeleton of a new Python command-line tool using the <a href="https://click.palletsprojects.com/">Click</a> library:</p>
+<div class="highlight highlight-source-shell"><pre>cookiecutter gh:simonw/click-app
+  [1/6] <span class="pl-en">app_name</span> (): files-to-prompt
+  [2/6] <span class="pl-en">description</span> (): Concatenate a directory full of files into a single prompt <span class="pl-k">for</span> use with LLMs
+  [3/6] hyphenated (files-to-prompt): 
+  [4/6] underscored (files_to_prompt): 
+  [5/6] <span class="pl-en">github_username</span> (): simonw
+  [6/6] <span class="pl-en">author_name</span> (): Simon Willison</pre></div>
+<p>I opened the <code>files_to_prompt/cli.py</code> file it created for me and used it to spec out how the initial version should work:</p>
+<pre><span class="pl-k">import</span> <span class="pl-s1">click</span>
+
+
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">command</span>()</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">argument</span>(</span>
+<span class="pl-en">    <span class="pl-s">"path"</span>,</span>
+<span class="pl-en">    <span class="pl-s1">type</span><span class="pl-c1">=</span><span class="pl-s1">click</span>.<span class="pl-v">Path</span></span>
+<span class="pl-en">)</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">option</span>(</span>
+<span class="pl-en">    <span class="pl-s">"--include-hidden"</span>,</span>
+<span class="pl-en">    <span class="pl-s1">is_flag</span><span class="pl-c1">=</span><span class="pl-c1">True</span>,</span>
+<span class="pl-en">    <span class="pl-s1">help</span><span class="pl-c1">=</span><span class="pl-s">"Include files and folders starting with ."</span>,</span>
+<span class="pl-en">)</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">version_option</span>()</span>
+<span class="pl-k">def</span> <span class="pl-en">cli</span>(<span class="pl-s1">path</span>, <span class="pl-s1">include_hidden</span>):
+    <span class="pl-s">"""</span>
+<span class="pl-s">    Takes a path to a folder and outputs every file in that folder,</span>
+<span class="pl-s">    recursively, each one preceeded with its filename like this:</span>
+<span class="pl-s">
+<span class="pl-s">    path/to/file.py</span>
+<span class="pl-s">    ----</span>
+<span class="pl-s">    Contents of file.py goes here</span>
+<span class="pl-s">
+<span class="pl-s">    ---</span>
+<span class="pl-s">    path/to/file2.py</span>
+<span class="pl-s">    ---</span>
+<span class="pl-s">    ...</span>
+<span class="pl-s">    """</span></pre>
+<p>This code defines a tool that takes a positional <code>path</code> argument and an optional <code>--include-hidden</code> flag, along with a Python docstring describing what it should do which will be displayed as the <code>--help</code> output.</p>
+<p>I’d originally intended to actually build the tool... but once I got to this point I realized that this might be enough information for Claude 3 Opus to do the rest of the work for me.</p>
+<p>So I ran this command:</p>
+<div class="highlight highlight-source-shell"><pre>cat files_to_prompt/cli.py <span class="pl-k">|</span> llm -m opus \
+  --system <span class="pl-s"><span class="pl-pds">'</span>finish this code for me<span class="pl-pds">'</span></span></pre></div>
+<p>You can see the <a href="https://gist.github.com/simonw/3492bc9a6ff639ff7fbaa081fa508131">full transcript here</a>, but from this single prompt Claude 3 Opus produced the exact implementation I needed:</p>
+<pre>    <span class="pl-k">for</span> <span class="pl-s1">root</span>, <span class="pl-s1">dirs</span>, <span class="pl-s1">files</span> <span class="pl-c1">in</span> <span class="pl-s1">os</span>.<span class="pl-en">walk</span>(<span class="pl-s1">path</span>):
+        <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">include_hidden</span>:
+            <span class="pl-s1">dirs</span>[:] <span class="pl-c1">=</span> [<span class="pl-s1">d</span> <span class="pl-k">for</span> <span class="pl-s1">d</span> <span class="pl-c1">in</span> <span class="pl-s1">dirs</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">d</span>.<span class="pl-en">startswith</span>(<span class="pl-s">"."</span>)]
+            <span class="pl-s1">files</span> <span class="pl-c1">=</span> [<span class="pl-s1">f</span> <span class="pl-k">for</span> <span class="pl-s1">f</span> <span class="pl-c1">in</span> <span class="pl-s1">files</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">f</span>.<span class="pl-en">startswith</span>(<span class="pl-s">"."</span>)]
+
+        <span class="pl-k">for</span> <span class="pl-s1">file</span> <span class="pl-c1">in</span> <span class="pl-s1">files</span>:
+            <span class="pl-s1">file_path</span> <span class="pl-c1">=</span> <span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">join</span>(<span class="pl-s1">root</span>, <span class="pl-s1">file</span>)
+            <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s1">file_path</span>, <span class="pl-s">"r"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+                <span class="pl-s1">file_contents</span> <span class="pl-c1">=</span> <span class="pl-s1">f</span>.<span class="pl-en">read</span>()
+
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s1">file_path</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s">"---"</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s1">file_contents</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>()
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s">"---"</span>)</pre>
+<p>I pasted that into by <code>cli.py</code> module and tried running it... and it worked first time.</p>
+<p>I tried a more challenging prompt next:</p>
+<div class="highlight highlight-source-shell"><pre>cat files_to_prompt/cli.py <span class="pl-k">|</span> llm -m opus <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">modify this code to add a --ignore-gitignore flag which defaults toFalse.</span>
+<span class="pl-s">Without this flag the code should read any .gitignore files and filter</span>
+<span class="pl-s">content based on the rules within them. With the flag it should not do</span>
+<span class="pl-s">that.<span class="pl-pds">'</span></span>	</pre></div>
+<p>I forgot to use the <code>--system</code> option here, so the argument prompt I passed to <code>llm</code> was concatenated directly onto the end of the code rather than being treated as a system/instruction prompt. This turned out not to matter.</p>
+<p><code>.gitignore</code> is a tricky format to handle. Claude 3 Opus didn’t do a comprehensive implementation, but it did support the subset that I cared about for this step of the development process.</p>
+<p>Here’s what it gave me (<a href="https://gist.github.com/simonw/437b764862c29d9057c11e5b60695b1b">full transcript here</a>):</p>
+<pre><span class="pl-k">import</span> <span class="pl-s1">os</span>
+<span class="pl-k">import</span> <span class="pl-s1">click</span>
+<span class="pl-k">from</span> <span class="pl-s1">pathlib</span> <span class="pl-k">import</span> <span class="pl-v">Path</span>
+<span class="pl-k">from</span> <span class="pl-s1">fnmatch</span> <span class="pl-k">import</span> <span class="pl-s1">fnmatch</span>
+
+
+<span class="pl-k">def</span> <span class="pl-en">should_ignore</span>(<span class="pl-s1">path</span>, <span class="pl-s1">gitignore_rules</span>):
+    <span class="pl-k">for</span> <span class="pl-s1">rule</span> <span class="pl-c1">in</span> <span class="pl-s1">gitignore_rules</span>:
+        <span class="pl-k">if</span> <span class="pl-en">fnmatch</span>(<span class="pl-s1">path</span>, <span class="pl-s1">rule</span>):
+            <span class="pl-k">return</span> <span class="pl-c1">True</span>
+    <span class="pl-k">return</span> <span class="pl-c1">False</span>
+
+
+<span class="pl-k">def</span> <span class="pl-en">read_gitignore</span>(<span class="pl-s1">path</span>):
+    <span class="pl-s1">gitignore_path</span> <span class="pl-c1">=</span> <span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">join</span>(<span class="pl-s1">path</span>, <span class="pl-s">".gitignore"</span>)
+    <span class="pl-k">if</span> <span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">isfile</span>(<span class="pl-s1">gitignore_path</span>):
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s1">gitignore_path</span>, <span class="pl-s">"r"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-k">return</span> [<span class="pl-s1">line</span>.<span class="pl-en">strip</span>() <span class="pl-k">for</span> <span class="pl-s1">line</span> <span class="pl-c1">in</span> <span class="pl-s1">f</span> <span class="pl-k">if</span> <span class="pl-s1">line</span>.<span class="pl-en">strip</span>() <span class="pl-c1">and</span> <span class="pl-c1">not</span> <span class="pl-s1">line</span>.<span class="pl-en">startswith</span>(<span class="pl-s">"#"</span>)]
+    <span class="pl-k">return</span> []
+
+
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">command</span>()</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">argument</span>(</span>
+<span class="pl-en">    <span class="pl-s">"path"</span>,</span>
+<span class="pl-en">    <span class="pl-s1">type</span><span class="pl-c1">=</span><span class="pl-s1">click</span>.<span class="pl-v">Path</span>(<span class="pl-s1">exists</span><span class="pl-c1">=</span><span class="pl-c1">True</span>, <span class="pl-s1">file_okay</span><span class="pl-c1">=</span><span class="pl-c1">False</span>, <span class="pl-s1">dir_okay</span><span class="pl-c1">=</span><span class="pl-c1">True</span>, <span class="pl-s1">readable</span><span class="pl-c1">=</span><span class="pl-c1">True</span>),</span>
+<span class="pl-en">)</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">option</span>(</span>
+<span class="pl-en">    <span class="pl-s">"--include-hidden"</span>,</span>
+<span class="pl-en">    <span class="pl-s1">is_flag</span><span class="pl-c1">=</span><span class="pl-c1">True</span>,</span>
+<span class="pl-en">    <span class="pl-s1">help</span><span class="pl-c1">=</span><span class="pl-s">"Include files and folders starting with ."</span>,</span>
+<span class="pl-en">)</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">option</span>(</span>
+<span class="pl-en">    <span class="pl-s">"--ignore-gitignore"</span>,</span>
+<span class="pl-en">    <span class="pl-s1">is_flag</span><span class="pl-c1">=</span><span class="pl-c1">True</span>,</span>
+<span class="pl-en">    <span class="pl-s1">help</span><span class="pl-c1">=</span><span class="pl-s">"Ignore .gitignore files and include all files"</span>,</span>
+<span class="pl-en">)</span>
+<span class="pl-en">@<span class="pl-s1">click</span>.<span class="pl-en">version_option</span>()</span>
+<span class="pl-k">def</span> <span class="pl-en">cli</span>(<span class="pl-s1">path</span>, <span class="pl-s1">include_hidden</span>, <span class="pl-s1">ignore_gitignore</span>):
+    <span class="pl-s">"""</span>
+<span class="pl-s">    Takes a path to a folder and outputs every file in that folder,</span>
+<span class="pl-s">    recursively, each one preceded with its filename like this:</span>
+<span class="pl-s">
+<span class="pl-s">    path/to/file.py</span>
+<span class="pl-s">    ----</span>
+<span class="pl-s">    Contents of file.py goes here</span>
+<span class="pl-s">
+<span class="pl-s">    ---</span>
+<span class="pl-s">    path/to/file2.py</span>
+<span class="pl-s">    ---</span>
+<span class="pl-s">    ...</span>
+<span class="pl-s">    """</span>
+    <span class="pl-s1">gitignore_rules</span> <span class="pl-c1">=</span> [] <span class="pl-k">if</span> <span class="pl-s1">ignore_gitignore</span> <span class="pl-k">else</span> <span class="pl-en">read_gitignore</span>(<span class="pl-s1">path</span>)
+
+    <span class="pl-k">for</span> <span class="pl-s1">root</span>, <span class="pl-s1">dirs</span>, <span class="pl-s1">files</span> <span class="pl-c1">in</span> <span class="pl-s1">os</span>.<span class="pl-en">walk</span>(<span class="pl-s1">path</span>):
+        <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">include_hidden</span>:
+            <span class="pl-s1">dirs</span>[:] <span class="pl-c1">=</span> [<span class="pl-s1">d</span> <span class="pl-k">for</span> <span class="pl-s1">d</span> <span class="pl-c1">in</span> <span class="pl-s1">dirs</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">d</span>.<span class="pl-en">startswith</span>(<span class="pl-s">"."</span>)]
+            <span class="pl-s1">files</span> <span class="pl-c1">=</span> [<span class="pl-s1">f</span> <span class="pl-k">for</span> <span class="pl-s1">f</span> <span class="pl-c1">in</span> <span class="pl-s1">files</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">f</span>.<span class="pl-en">startswith</span>(<span class="pl-s">"."</span>)]
+
+        <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-s1">ignore_gitignore</span>:
+            <span class="pl-s1">gitignore_rules</span>.<span class="pl-en">extend</span>(<span class="pl-en">read_gitignore</span>(<span class="pl-s1">root</span>))
+            <span class="pl-s1">dirs</span>[:] <span class="pl-c1">=</span> [<span class="pl-s1">d</span> <span class="pl-k">for</span> <span class="pl-s1">d</span> <span class="pl-c1">in</span> <span class="pl-s1">dirs</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-en">should_ignore</span>(<span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">join</span>(<span class="pl-s1">root</span>, <span class="pl-s1">d</span>), <span class="pl-s1">gitignore_rules</span>)]
+            <span class="pl-s1">files</span> <span class="pl-c1">=</span> [<span class="pl-s1">f</span> <span class="pl-k">for</span> <span class="pl-s1">f</span> <span class="pl-c1">in</span> <span class="pl-s1">files</span> <span class="pl-k">if</span> <span class="pl-c1">not</span> <span class="pl-en">should_ignore</span>(<span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">join</span>(<span class="pl-s1">root</span>, <span class="pl-s1">f</span>), <span class="pl-s1">gitignore_rules</span>)]
+
+        <span class="pl-k">for</span> <span class="pl-s1">file</span> <span class="pl-c1">in</span> <span class="pl-s1">files</span>:
+            <span class="pl-s1">file_path</span> <span class="pl-c1">=</span> <span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">join</span>(<span class="pl-s1">root</span>, <span class="pl-s1">file</span>)
+            <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s1">file_path</span>, <span class="pl-s">"r"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+                <span class="pl-s1">file_contents</span> <span class="pl-c1">=</span> <span class="pl-s1">f</span>.<span class="pl-en">read</span>()
+
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s1">file_path</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s">"---"</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s1">file_contents</span>)
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>()
+            <span class="pl-s1">click</span>.<span class="pl-en">echo</span>(<span class="pl-s">"---"</span>)</pre>
+<p>From that point on I was hooked: could I use the new <code>files-to-prompt</code> tool to build the rest of itself?</p>
+<p>Since I’d already bootstrapped it to a point where I could use it, I ran it for real for the first time:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt <span class="pl-c1">.</span> <span class="pl-k">|</span> llm -m opus --system <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">fill out the test_files_to_prompt.py with tests, use tmpdir fixture</span>
+<span class="pl-s">to create example directories to run the command against - tests</span>
+<span class="pl-s">should cover both of the optional flags<span class="pl-pds">'</span></span></pre></div>
+<p>Here I’m sending it quite a bit of code—the implementation, the README and the Apache 2 License are all included in that prompt.</p>
+<p>It wrote me these tests:</p>
+<pre><span class="pl-k">import</span> <span class="pl-s1">os</span>
+<span class="pl-k">from</span> <span class="pl-s1">click</span>.<span class="pl-s1">testing</span> <span class="pl-k">import</span> <span class="pl-v">CliRunner</span>
+<span class="pl-k">from</span> <span class="pl-s1">files_to_prompt</span>.<span class="pl-s1">cli</span> <span class="pl-k">import</span> <span class="pl-s1">cli</span>
+
+<span class="pl-k">def</span> <span class="pl-en">test_basic_functionality</span>(<span class="pl-s1">tmpdir</span>):
+    <span class="pl-s1">runner</span> <span class="pl-c1">=</span> <span class="pl-v">CliRunner</span>()
+    <span class="pl-k">with</span> <span class="pl-s1">tmpdir</span>.<span class="pl-en">as_cwd</span>():
+        <span class="pl-s1">os</span>.<span class="pl-en">makedirs</span>(<span class="pl-s">"test_dir"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/file1.txt"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"Contents of file1"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/file2.txt"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"Contents of file2"</span>)
+        
+        <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-s1">runner</span>.<span class="pl-en">invoke</span>(<span class="pl-s1">cli</span>, [<span class="pl-s">"test_dir"</span>])
+        <span class="pl-k">assert</span> <span class="pl-s1">result</span>.<span class="pl-s1">exit_code</span> <span class="pl-c1">==</span> <span class="pl-c1">0</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/file1.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"Contents of file1"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/file2.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"Contents of file2"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+
+<span class="pl-k">def</span> <span class="pl-en">test_include_hidden</span>(<span class="pl-s1">tmpdir</span>):
+    <span class="pl-s1">runner</span> <span class="pl-c1">=</span> <span class="pl-v">CliRunner</span>()
+    <span class="pl-k">with</span> <span class="pl-s1">tmpdir</span>.<span class="pl-en">as_cwd</span>():
+        <span class="pl-s1">os</span>.<span class="pl-en">makedirs</span>(<span class="pl-s">"test_dir"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/.hidden.txt"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"Contents of hidden file"</span>)
+        
+        <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-s1">runner</span>.<span class="pl-en">invoke</span>(<span class="pl-s1">cli</span>, [<span class="pl-s">"test_dir"</span>])
+        <span class="pl-k">assert</span> <span class="pl-s1">result</span>.<span class="pl-s1">exit_code</span> <span class="pl-c1">==</span> <span class="pl-c1">0</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/.hidden.txt"</span> <span class="pl-c1">not</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        
+        <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-s1">runner</span>.<span class="pl-en">invoke</span>(<span class="pl-s1">cli</span>, [<span class="pl-s">"test_dir"</span>, <span class="pl-s">"--include-hidden"</span>])
+        <span class="pl-k">assert</span> <span class="pl-s1">result</span>.<span class="pl-s1">exit_code</span> <span class="pl-c1">==</span> <span class="pl-c1">0</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/.hidden.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"Contents of hidden file"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+
+<span class="pl-k">def</span> <span class="pl-en">test_ignore_gitignore</span>(<span class="pl-s1">tmpdir</span>):
+    <span class="pl-s1">runner</span> <span class="pl-c1">=</span> <span class="pl-v">CliRunner</span>()
+    <span class="pl-k">with</span> <span class="pl-s1">tmpdir</span>.<span class="pl-en">as_cwd</span>():
+        <span class="pl-s1">os</span>.<span class="pl-en">makedirs</span>(<span class="pl-s">"test_dir"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/.gitignore"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"ignored.txt"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/ignored.txt"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"This file should be ignored"</span>)
+        <span class="pl-k">with</span> <span class="pl-en">open</span>(<span class="pl-s">"test_dir/included.txt"</span>, <span class="pl-s">"w"</span>) <span class="pl-k">as</span> <span class="pl-s1">f</span>:
+            <span class="pl-s1">f</span>.<span class="pl-en">write</span>(<span class="pl-s">"This file should be included"</span>)
+        
+        <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-s1">runner</span>.<span class="pl-en">invoke</span>(<span class="pl-s1">cli</span>, [<span class="pl-s">"test_dir"</span>])
+        <span class="pl-k">assert</span> <span class="pl-s1">result</span>.<span class="pl-s1">exit_code</span> <span class="pl-c1">==</span> <span class="pl-c1">0</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/ignored.txt"</span> <span class="pl-c1">not</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/included.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        
+        <span class="pl-s1">result</span> <span class="pl-c1">=</span> <span class="pl-s1">runner</span>.<span class="pl-en">invoke</span>(<span class="pl-s1">cli</span>, [<span class="pl-s">"test_dir"</span>, <span class="pl-s">"--ignore-gitignore"</span>])
+        <span class="pl-k">assert</span> <span class="pl-s1">result</span>.<span class="pl-s1">exit_code</span> <span class="pl-c1">==</span> <span class="pl-c1">0</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/ignored.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"This file should be ignored"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span>
+        <span class="pl-k">assert</span> <span class="pl-s">"test_dir/included.txt"</span> <span class="pl-c1">in</span> <span class="pl-s1">result</span>.<span class="pl-s1">output</span></pre>
+<p>Then I ran them... and they failed. Here’s the error message:</p>
+<pre><code>    def test_ignore_gitignore(tmpdir):
+        runner = CliRunner()
+        with tmpdir.as_cwd():
+            os.makedirs("test_dir")
+            with open("test_dir/.gitignore", "w") as f:
+                f.write("ignored.txt")
+            with open("test_dir/ignored.txt", "w") as f:
+                f.write("This file should be ignored")
+            with open("test_dir/included.txt", "w") as f:
+                f.write("This file should be included")
+    
+            result = runner.invoke(cli, ["test_dir"])
+            assert result.exit_code == 0
+&gt;           assert "test_dir/ignored.txt" not in result.output
+E           AssertionError: assert 'test_dir/ignored.txt' not in 'test_dir/in...red\n\n---\n'
+E             
+E             'test_dir/ignored.txt' is contained here:
+E               uded
+E               
+E               ---
+E               test_dir/ignored.txt
+E               ---...
+E             
+E             ...Full output truncated (3 lines hidden), use '-vv' to show
+</code></pre>
+<p>I saved that message to `error.txt and ran this command to send it back to Claude 3 Opus:</p>
+<div class="highlight highlight-source-shell"><pre>cat error.txt <span class="pl-k">|</span> llm -c</pre></div>
+<p>The <code>llm -c</code> command stands for “continue”—it will take any input or prompt and pass that back to the model along with the previous logged prompts and responses, equivalent to asking a follow-up question in an interface like ChatGPT.</p>
+<p>Claude gave me back a corrected version of the <code>should_ignore()</code> function:</p>
+<pre><span class="pl-k">def</span> <span class="pl-en">should_ignore</span>(<span class="pl-s1">path</span>, <span class="pl-s1">gitignore_rules</span>):
+    <span class="pl-k">for</span> <span class="pl-s1">rule</span> <span class="pl-c1">in</span> <span class="pl-s1">gitignore_rules</span>:
+        <span class="pl-k">if</span> <span class="pl-en">fnmatch</span>(<span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">basename</span>(<span class="pl-s1">path</span>), <span class="pl-s1">rule</span>):
+            <span class="pl-k">return</span> <span class="pl-c1">True</span>
+        <span class="pl-k">if</span> <span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">isdir</span>(<span class="pl-s1">path</span>) <span class="pl-c1">and</span> <span class="pl-en">fnmatch</span>(<span class="pl-s1">os</span>.<span class="pl-s1">path</span>.<span class="pl-en">basename</span>(<span class="pl-s1">path</span>) <span class="pl-c1">+</span> <span class="pl-s">"/"</span>, <span class="pl-s1">rule</span>):
+            <span class="pl-k">return</span> <span class="pl-c1">True</span>
+    <span class="pl-k">return</span> <span class="pl-c1">False</span></pre>
+<p>Sending follow-on prompts with <code>llm -c</code> seemed to be working well, so I ran this:</p>
+<div class="highlight highlight-source-shell"><pre>llm -c <span class="pl-s"><span class="pl-pds">'</span>Fill out the Usage section of the README for this project - just return that section as markdown<span class="pl-pds">'</span></span></pre></div>
+<p>And it gave me back a pretty decent README:</p>
+<blockquote>
+<h2>Usage</h2>
+<p>To use <code>files-to-prompt</code>, simply provide the path to the directory you want to process:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt path/to/directory</pre></div>
+<p>This will output the contents of every file in the directory and its subdirectories, with each file preceded by its relative path and separated by <code>---</code>.</p>
+<h3>Options</h3>
+<ul>
+<li>
+<p><code>--include-hidden</code>: Include files and folders starting with <code>.</code> (hidden files and directories).</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt path/to/directory --include-hidden</pre></div>
+</li>
+<li>
+<p><code>--ignore-gitignore</code>: Ignore <code>.gitignore</code> files and include all files.</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt path/to/directory --ignore-gitignore</pre></div>
+</li>
+</ul>
+<h3>Example</h3>
+<p>Suppose you have a directory structure like this:</p>
+<pre><code>my_directory/
+├── file1.txt
+├── file2.txt
+├── .hidden_file.txt
+└── subdirectory/
+    └── file3.txt
+</code></pre>
+<p>Running <code>files-to-prompt my_directory</code> will output:</p>
+<pre><code>my_directory/file1.txt
+---
+Contents of file1.txt
+---
+my_directory/file2.txt
+---
+Contents of file2.txt
+---
+my_directory/subdirectory/file3.txt
+---
+Contents of file3.txt
+---
+</code></pre>
+<p>If you run <code>files-to-prompt my_directory --include-hidden</code>, the output will also include <code>.hidden_file.txt</code>:</p>
+<pre><code>my_directory/.hidden_file.txt
+---
+Contents of .hidden_file.txt
+---
+...
+</code></pre>
+</blockquote>
+<p>I particularly liked the directory structure diagram.</p>
+<p>Here’s <a href="https://gist.github.com/simonw/5b7ce53bf85ba1403af81e3be83ca32f">the full transcript including my follow-ups</a>.</p>
+<p>I committed and pushed everything I had so far <a href="https://github.com/simonw/files-to-prompt/commits/main/">to GitHub</a>.</p>
+<p>After one last review of the README I noticed it had used the phrase “simply provide the path to the directory”. I don’t like using words like <em>simply</em> in documentation, so <a href="https://github.com/simonw/files-to-prompt/commit/c9c60d57a3a92aebe8112c6fdd6158093982ab9f">I fixed that</a>.</p>
+<p>And I shipped <a href="https://github.com/simonw/files-to-prompt/releases/tag/0.1">version 0.1</a> of the software! Almost every line of code, tests and documentation written by Claude 3 Opus.</p>
+<h4 id="iterating-on-the-project">Iterating on the project</h4>
+<p>I’ve added several features since that initial implementation, almost all of which were primarily written by prompting Claude 3 Opus.</p>
+<p><a href="https://github.com/simonw/files-to-prompt/issues/2">Issue #2: Take multiple arguments for files and directories to include</a> changed the tool such that <code>files-to-prompt README.md tests/</code> would include both the <code>README.md</code> file and all files in the <code>tests/</code> directory.</p>
+<p>The sequence of prompts to get there was as follows:</p>
+<div class="highlight highlight-source-shell"><pre>cat files_to_prompt/cli.py <span class="pl-k">|</span> llm -m opus --system <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">Modify this file. It should take multiple arguments in a variable called paths.</span>
+<span class="pl-s">Each of those argumets might be a path to a file or it might be a path to a</span>
+<span class="pl-s">directory - if any of the arguments do not correspoind to a file or directory</span>
+<span class="pl-s">it should raise a click error.</span>
+<span class="pl-s">
+<span class="pl-s">It should then do what it does already but for all files </span>
+<span class="pl-s">files-recursively-contained-within-folders that are passed to it.</span>
+<span class="pl-s">
+<span class="pl-s">It should still obey the gitignore logic.<span class="pl-pds">'</span></span></pre></div>
+<p>Then these to update the tests:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt files_to_prompt tests <span class="pl-k">|</span> llm -m opus --system <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">rewrite the tests to cover the ability to pass multiple files and</span>
+<span class="pl-s">folders to the tool<span class="pl-pds">'</span></span>
+
+files-to-prompt files_to_prompt tests <span class="pl-k">|</span> llm -m opus --system <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">add one last test which tests .gitignore and include_hidden against</span>
+<span class="pl-s">an example that mixes single files and directories of files together</span>
+<span class="pl-s">in one invocation<span class="pl-pds">'</span></span></pre></div>
+<p>I didn’t like the filenames it was using in that last test, so I used <a href="https://github.com/simonw/symbex">symbex</a> to extract just the implementation of that test and told it to rewrite it:</p>
+<div class="highlight highlight-source-shell"><pre>symbex test_mixed_paths_with_options <span class="pl-k">|</span> llm -m opus --system <span class="pl-s"><span class="pl-pds">'</span></span>
+<span class="pl-s">rewrite this test so the filenames are more obvious, thinks like</span>
+<span class="pl-s">ignored_in_gitignore.txt<span class="pl-pds">'</span></span></pre></div>
+<p>And this to add one last test that combined all of the options:</p>
+<div class="highlight highlight-source-shell"><pre>llm -c <span class="pl-s"><span class="pl-pds">'</span>add a last bit to that test for</span>
+<span class="pl-s">["test_dir", "single_file.txt", "--ignore-gitignore", "--include-hidden"]<span class="pl-pds">'</span></span></pre></div>
+<p><a href="https://github.com/simonw/files-to-prompt/issues/2">The issue</a> includes links to the full transcripts for the above.</p>
+<h4 id="updating-a-diff">Updating a diff from a pull request</h4>
+<p>I quietly released <code>files-to-prompt</code> two weeks ago. <a href="https://github.com/simonw/files-to-prompt/pull/4">Dipam Vasani</a> had spotted it and <a href="https://github.com/simonw/files-to-prompt/pull/4">opened a pull request</a> adding the ability to ignore specific files, by passing <code>--ignore-patterns '*.md'</code> as an option.</p>
+<p>The problem was... I’d landed some of my own changes before I got around to reviewing his PR—so it would no longer cleanly apply.</p>
+<p>It turns out I could resolve that problem using Claude 3 Opus as well, by asking it to figure out the change from Dipam’s diff.</p>
+<p>I pulled a copy of his PR as a diff like this:</p>
+<div class="highlight highlight-source-shell"><pre>wget <span class="pl-s"><span class="pl-pds">'</span>https://github.com/simonw/files-to-prompt/pull/4.diff<span class="pl-pds">'</span></span></pre></div>
+<p>Then I fed both the diff and the relevant files from the project into Claude:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt 4.diff files_to_prompt/cli.py tests/test_files_to_prompt.py <span class="pl-k">|</span> \
+  llm -m opus --system \
+  <span class="pl-s"><span class="pl-pds">'</span>Apply the change described in the diff to the project - return updated cli.py and tests<span class="pl-pds">'</span></span></pre></div>
+<p>It didn’t quite work—it reverted one of my earlier changes. So I prompted:</p>
+<div class="highlight highlight-source-shell"><pre>llm -c <span class="pl-s"><span class="pl-pds">'</span>you undid the change where it could handle multiple paths -</span>
+<span class="pl-s">I want to keep that, I only want to add the new --ignore-patterns option<span class="pl-pds">'</span></span></pre></div>
+<p>And that time it worked! <a href="https://gist.github.com/simonw/8b8394e320c895c792736e7e85c40c23">Transcript here</a>.</p>
+<p>I merged Claude’s work into the existing PR to ensure Dipam got credit for his work, then <a href="https://github.com/simonw/files-to-prompt/commit/f8af0fad7f206f029869cda7b4a1846b19aee423">landed it</a> and pushed it out in a release.</p>
+<h4 id="was-this-worthwhile">Was this worthwhile?</h4>
+<p>As an exercise in testing the limits of what’s possible with command-line LLM access and the current most powerful available LLM, this was absolutely worthwhile. I got working software with comprehensive tests and documentation, and had a lot of fun experimenting with prompts along the way.</p>
+<p>It’s worth noting that this project was <em>incredibly</em> low stakes. <code>files-to-prompt</code> is a tiny tool that does something very simple. Any bugs or design flaws really don’t matter. It’s perfect for trying out this alternative approach to development.</p>
+<p>I also got the software built a whole lot faster than if I’d written it myself, and with features like <code>.gitignore</code> support (albeit rudimentary) that I may not have bothered with working alone. That’s a good example of a feature that’s just fiddly enough that I might decide not to invest the time needed to get it to work.</p>
+<p>Is this the best possible version of this software? Definitely not. But with comprehensive documentation and automated tests it’s high enough quality that I’m not ashamed to release it with my name on it.</p>
+<p>A year ago I might have felt <em>guilty</em> about using LLMs to write code for me in this way. I’m over that now: I’m still doing the work, but I now have a powerful tool that can help accelerate the process.</p>
+<h4 id="real-work">Using this pattern for real work</h4>
+<p>I’ve since used the same pattern for some smaller modifications to some of my more significant projects. This morning I used it to upgrade my <a href="https://github.com/simonw/datasette-cors">datasette-cors</a> plugin to add support for new features I had added to the underlying <a href="https://github.com/simonw/asgi-cors">asgi-cors</a> library. Here’s the prompt sequence I used:</p>
+<div class="highlight highlight-source-shell"><pre>files-to-prompt ../asgi-cors/asgi_cors.py datasette_cors.py <span class="pl-k">|</span> llm -m opus -s \
+<span class="pl-s"><span class="pl-pds">'</span>Output a new datasette_cors.py plugin that adds headers and methods and max_age config options<span class="pl-pds">'</span></span>
+
+files-to-prompt test_datasette_cors.py <span class="pl-k">|</span> llm -c \
+  <span class="pl-s"><span class="pl-pds">'</span>Update these tests to exercise the new options as well<span class="pl-pds">'</span></span>
+
+cat README.md <span class="pl-k">|</span> llm -c \
+  <span class="pl-s"><span class="pl-pds">'</span>Update the README to document the new config options<span class="pl-pds">'</span></span></pre></div>
+<p>And the <a href="https://gist.github.com/simonw/5e379cc3ed610caf8dfbdfe25b19874a">full transcript</a>.</p>
+<p>I reviewed this code <em>very carefully</em> <a href="https://github.com/simonw/datasette-cors/commit/53b126b9f9ae52c9f8f2ec8cf751b7f1c9b804de">before landing it</a>. It’s absolutely what I would have written myself without assistance from Claude.</p>
+<p>Time elapsed for this change? The first prompt was logged at 16:42:11 and the last at 16:44:24, so just over two minutes followed by a couple more minutes for the review. The <a href="https://github.com/simonw/datasette-cors/issues/5">associated issue</a> was open for five minutes total.</p>
+
+
+</div>
+<div class="entryFooter">Posted <a href="/2024/Apr/8/">8th April 2024</a> at 8:40 pm &middot; Follow me on <a href="https://fedi.simonwillison.net/@simon">Mastodon</a>, <a href="https://bsky.app/profile/simonwillison.net">Bluesky</a>, <a href="https://twitter.com/simonw">Twitter</a> or <a href="https://simonwillison.net/about/#subscribe">subscribe to my newsletter</a></div>
+<p class="edit-page-link" data-admin-url="/admin/blog/entry/8335/" style="display: none;"></p>
+
+</div>
+
+<div class="recent-articles">
+<h2>More recent articles</h2>
+<ul class="bullets">
+  
+    <li><a href="/2026/Apr/8/muse-spark/">Meta&#x27;s new model is Muse Spark, and meta.ai chat has some interesting tools</a> - 8th April 2026</li>
+  
+    <li><a href="/2026/Apr/7/project-glasswing/">Anthropic&#x27;s Project Glasswing - restricting Claude Mythos to security researchers - sounds necessary to me</a> - 7th April 2026</li>
+  
+    <li><a href="/2026/Apr/3/supply-chain-social-engineering/">The Axios supply chain attack used individually targeted social engineering</a> - 3rd April 2026</li>
+  
+</ul>
+</div>
+
+
+</div> <!-- #primary -->
+
+<div id="secondary">
+
+<div class="metabox">
+<p class="this-is">This is <strong>Building files-to-prompt entirely using Claude 3 Opus</strong> by Simon Willison, posted on <a href="/2024/Apr/8/">8th April 2024</a>.</p>
+
+<div class="series-info">
+  <p>Part of series <strong><a href="/series/using-llms/">How I use LLMs and ChatGPT</a></strong></p>
+  <ol start="11">
+    
+      
+        <li><a href="/2024/Mar/23/building-c-extensions-for-sqlite-with-chatgpt-code-interpreter/">Building and testing C extensions for SQLite with ChatGPT Code Interpreter</a> - March 23, 2024, 5:50 p.m. </li>
+      
+    
+      
+        <li><a href="/2024/Mar/26/llm-cmd/">llm cmd undo last git commit - a new plugin for LLM</a> - March 26, 2024, 3:37 p.m. </li>
+      
+    
+      
+        <li><a href="/2024/Mar/30/ocr-pdfs-images/">Running OCR against PDFs and images directly in your browser</a> - March 30, 2024, 5:59 p.m. </li>
+      
+    
+      
+        <li><strong>Building files-to-prompt entirely using Claude 3 Opus</strong></a> - April 8, 2024, 8:40 p.m. </li>
+      
+    
+      
+        <li><a href="/2024/Apr/17/ai-for-data-journalism/">AI for Data Journalism: demonstrating what we can do with this stuff right now</a> - April 17, 2024, 9:04 p.m. </li>
+      
+    
+      
+        <li><a href="/2024/Jun/21/search-based-rag/">Building search-based RAG using Claude, Datasette and Val Town</a> - June 21, 2024, 8:44 p.m. </li>
+      
+    
+      
+        <li><a href="/2024/Aug/8/django-http-debug/">django-http-debug, a new Django app mostly written by Claude</a> - Aug. 8, 2024, 3:26 p.m. </li>
+      
+    
+    <li style="list-style-type: none;"><a href="/series/using-llms/">&#8230; more</a></li>
+  </ol>
+</div>
+
+
+    
+        <a class="item-tag" href="/tags/cli/" rel="tag">
+            cli
+            <span>109</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/projects/" rel="tag">
+            projects
+            <span>524</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai/" rel="tag">
+            ai
+            <span>1955</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/prompt-engineering/" rel="tag">
+            prompt-engineering
+            <span>182</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/generative-ai/" rel="tag">
+            generative-ai
+            <span>1735</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/llms/" rel="tag">
+            llms
+            <span>1702</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai-assisted-programming/" rel="tag">
+            ai-assisted-programming
+            <span>373</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/llm/" rel="tag">
+            llm
+            <span>584</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/anthropic/" rel="tag">
+            anthropic
+            <span>267</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/claude/" rel="tag">
+            claude
+            <span>264</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/files-to-prompt/" rel="tag">
+            files-to-prompt
+            <span>24</span>
+        </a>
+    
+
+
+<p><strong>Next:</strong> <a href="/2024/Apr/10/weeknotes-llm-releases/">Three major LLM releases in 24 hours (plus weeknotes)</a></p>
+
+
+<p><strong>Previous:</strong> <a href="/2024/Mar/30/ocr-pdfs-images/">Running OCR against PDFs and images directly in your browser</a></p>
+
+
+<section style="
+    /* .promo */
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    padding: 1rem 1.25rem;
+    /* .variant-a */
+    border: 2px solid #6c3eb9;
+  ">
+  <h3 style="
+      /* h3 */
+      margin: 0 0 0.5rem;
+      font-size: 1.25rem;
+    ">
+    Monthly briefing
+  </h3>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Sponsor me for <strong>$10/month</strong> and get a curated email digest of the month's most important LLM developments.
+  </p>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Pay me to send you less!
+  </p>
+  <a href="https://github.com/sponsors/simonw/" style="
+      /* a.button */
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      background: #6c3eb9;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: 600;
+    ">
+    Sponsor &amp; subscribe
+  </a>
+</section>
+</div>
+
+
+
+</div> <!-- #secondary -->
+</div> <!-- #wrapper -->
+
+
+
+
+
+
+
+
+
+
+
+<div id="ft">
+    <ul>
+      <li><a href="/about/#disclosures">Disclosures</a></li>
+      <li><a href="/about/#about-site">Colophon</a></li>
+      <li>&copy;</li>
+      <li><a href="/2002/">2002</a></li>
+      <li><a href="/2003/">2003</a></li>
+      <li><a href="/2004/">2004</a></li>
+      <li><a href="/2005/">2005</a></li>
+      <li><a href="/2006/">2006</a></li>
+      <li><a href="/2007/">2007</a></li>
+      <li><a href="/2008/">2008</a></li>
+      <li><a href="/2009/">2009</a></li>
+      <li><a href="/2010/">2010</a></li>
+      <li><a href="/2011/">2011</a></li>
+      <li><a href="/2012/">2012</a></li>
+      <li><a href="/2013/">2013</a></li>
+      <li><a href="/2014/">2014</a></li>
+      <li><a href="/2015/">2015</a></li>
+      <li><a href="/2016/">2016</a></li>
+      <li><a href="/2017/">2017</a></li>
+      <li><a href="/2018/">2018</a></li>
+      <li><a href="/2019/">2019</a></li>
+      <li><a href="/2020/">2020</a></li>
+      <li><a href="/2021/">2021</a></li>
+      <li><a href="/2022/">2022</a></li>
+      <li><a href="/2023/">2023</a></li>
+      <li><a href="/2024/">2024</a></li>
+      <li><a href="/2025/">2025</a></li>
+      <li><a href="/2026/">2026</a></li>
+      <li>
+        <button id="theme-toggle" type="button" aria-label="Toggle theme">
+          <!-- Auto/System icon (default) -->
+          <svg id="icon-auto" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2V4a8 8 0 1 0 0 16z"/></svg>
+          <!-- Light icon -->
+          <svg id="icon-light" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="display:none"><path d="M12 18a6 6 0 1 1 0-12 6 6 0 0 1 0 12zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.93zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.414-2.121-2.121zm2.121-14.85l1.414 1.415-2.121 2.121-1.414-1.414 2.121-2.121zM5.636 16.95l1.414 1.414-2.121 2.121-1.414-1.414 2.121-2.121zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+          <!-- Dark icon -->
+          <svg id="icon-dark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="display:none"><path d="M10 7a7 7 0 0 0 12 4.9v.1c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2h.1A6.979 6.979 0 0 0 10 7zm-6 5a8 8 0 0 0 15.062 3.762A9 9 0 0 1 8.238 4.938 7.999 7.999 0 0 0 4 12z"/></svg>
+        </button>
+      </li>
+    </ul>
+</div>
+
+
+
+<style>image-gallery:not(:defined) img {max-height: 150px;}</style>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('h2[id],h3[id],h4[id],h5[id],h6[id]').forEach(el => {
+    const id = el.getAttribute('id');
+    const permalinkContext = el.closest('[data-permalink-context]');
+    if (permalinkContext) {
+      const url = permalinkContext.getAttribute('data-permalink-context');
+      const hashLink = document.createElement('a');
+      hashLink.style.borderBottom = 'none';
+      hashLink.style.color = '#666';
+      hashLink.style.fontSize = '1em';
+      hashLink.style.opacity = 0.8;
+      hashLink.setAttribute('href', url + '#' + id);
+      hashLink.innerText = '#';
+      el.appendChild(document.createTextNode('\u00A0'));
+      el.appendChild(hashLink);
+    }
+  });
+});
+</script>
+<script type="module">
+const config = [
+  {"tag": "lite-youtube", "js": "/static/lite-yt-embed.js", "css": "/static/lite-yt-embed.css"},
+  {"tag": "image-gallery", "js": "/static/image-gallery.js", "css": null}
+];
+for (const {tag, js, css} of config) {
+  if (document.querySelector(tag)) {
+    if (css) {
+      document.head.appendChild(
+        Object.assign(document.createElement('link'), {
+          rel: 'stylesheet',
+          href: css
+        })
+      );
+    }
+    if (js) {
+      await import(js);
+    }
+  }
+}
+</script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.localStorage.getItem('ADMIN')) {
+      document.querySelectorAll('.edit-page-link').forEach(el => {
+        const url = el.getAttribute('data-admin-url');
+        if (url) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.className = 'edit-link';
+          a.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg> Edit';
+          el.appendChild(a);
+          el.style.display = 'block';
+        }
+      });
+    }
+  });
+</script>
+<script>
+// Random tag navigation - shows button if recently came from tag random
+(function() {
+  const stored = localStorage.getItem('random_tag');
+  if (!stored) return;
+
+  try {
+    const data = JSON.parse(stored);
+    const elapsed = Date.now() - data.timestamp;
+
+    // Only show if within 5 seconds
+    if (elapsed > 5000) return;
+
+    const header = document.getElementById('smallhead-inner');
+    if (!header) return;
+
+    const btn = document.createElement('a');
+    btn.href = '/random/' + encodeURIComponent(data.tag) + '/';
+    btn.className = 'random-tag-nav';
+    btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="15.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></svg> Random ' + data.tag;
+
+    btn.addEventListener('click', function(e) {
+      // Bump the timestamp before navigating
+      localStorage.setItem('random_tag', JSON.stringify({
+        tag: data.tag,
+        timestamp: Date.now()
+      }));
+    });
+
+    // Insert before the Subscribe link
+    const subscribeLink = document.getElementById('smallhead-about');
+    if (subscribeLink) {
+      header.insertBefore(btn, subscribeLink);
+    } else {
+      header.appendChild(btn);
+    }
+  } catch (e) {
+    // Invalid JSON, clear it
+    localStorage.removeItem('random_tag');
+  }
+})();
+</script>
+<script>
+// Theme toggle functionality
+(function() {
+  const toggle = document.getElementById('theme-toggle');
+  const iconAuto = document.getElementById('icon-auto');
+  const iconLight = document.getElementById('icon-light');
+  const iconDark = document.getElementById('icon-dark');
+
+  // Theme states: 'auto' (default), 'light', 'dark'
+  function getTheme() {
+    return localStorage.getItem('theme') || 'auto';
+  }
+
+  function setTheme(theme) {
+    if (theme === 'auto') {
+      localStorage.removeItem('theme');
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      localStorage.setItem('theme', theme);
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+    updateIcon(theme);
+  }
+
+  function updateIcon(theme) {
+    iconAuto.style.display = theme === 'auto' ? 'block' : 'none';
+    iconLight.style.display = theme === 'light' ? 'block' : 'none';
+    iconDark.style.display = theme === 'dark' ? 'block' : 'none';
+
+    // Update aria-label for accessibility
+    const labels = {
+      'auto': 'Theme: Auto (system preference). Click to switch to light.',
+      'light': 'Theme: Light. Click to switch to dark.',
+      'dark': 'Theme: Dark. Click to switch to auto.'
+    };
+    toggle.setAttribute('aria-label', labels[theme]);
+  }
+
+  // Cycle through themes: auto -> light -> dark -> auto
+  function cycleTheme() {
+    const current = getTheme();
+    const next = current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto';
+    setTheme(next);
+  }
+
+  // Initialize
+  updateIcon(getTheme());
+  toggle.addEventListener('click', cycleTheme);
+})();
+</script>
+</body>
+</html>
