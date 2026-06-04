@@ -24,11 +24,17 @@ each revision). **Execution ledger:** `dev/perf-audit-progress.md`.
 | 2 | Opus subagent | v2 | `round-2.md` | minor-edits → v3 |
 | 3 | Opus subagent | v3 | `round-3.md` | minor-edits → v4 |
 | 4 | Opus subagent | v4 | `round-4.md` | substantive (calibration) → v5 |
-| 5 | Opus subagent | v5 | `round-5.md` | pending |
+| 5 | Opus subagent | v5 | `round-5.md` | **GO** → v6 (final) |
 
 Convergence rule: continue past 5 only if a round still finds a *substantive*
 (tier-changing or coverage-breaking) defect. Finalize when ≥5 done and the last
 round finds only nits.
+
+**FINALIZED at v6 (2026-06-04).** Round 5 verdict GO; its findings are
+calibration/accuracy refinements (FEC-latent reframing, R2 path fix), none
+tier-changing or coverage-breaking, none blocking M1. Five independent Opus
+rounds satisfy the operator's ≥5-round mandate. Execution proceeds; see
+`dev/perf-audit-progress.md`.
 
 ---
 
@@ -165,3 +171,49 @@ shipped this bug). All ACCEPTED:
 Outcome: 17 → **16 units** (R7 demoted) + W0 pre-artifact. The substantive
 calibration fix is the headline. **Round 5** is a genuine final gate, not a
 rubber stamp.
+
+---
+
+## Round 5 — dispositions (v5 → v6, FINAL/GO)
+
+Full report: `dev/perf-audit-reviews/round-5.md`. Final-gate verdict: **GO** —
+v5 executable, start M1. All v5 fixes verified against source (W0 lzhuf driver
+chain `winlink_backend.rs:233→:250→message.rs:161`; R7 listener hot-loop-free;
+H11 `transfer.rs:100-104` per-byte; W0→R8→R3 order resolves the gap).
+
+Substantive accuracy catch (nearly missed by all 5 rounds):
+
+1. **`tuxmodem-fec` has ZERO in-tree callers** — dep commented at
+   `tuxmodem-phy/Cargo.toml:23`; live path uses hard-decision slicing
+   (`decode_symbol_bytes`) bypassing FEC; `coded_modulation.rs` says real FEC
+   plugs in once `#4` lands. ⇒ M2's H2 is **intrinsic-cost / latent**
+   (reachability ≈ 0 today). M2 still audited, but findings flagged "fires once
+   FEC is wired in." **O1 overlay corrected** — its RX chain `…→Decoder::decode`
+   does not exist in current source; reframed to the real chain
+   `…→compute_llr→decode_symbol_bytes`, with the latent FEC stage annotated.
+   ACCEPTED.
+2. **DSP/FEC cross-slice frequency check (the new Round-5 angle): clean.** M1's
+   per-symbol decode driver `receive_multi` (`wideband_lowdensity.rs:334`) is
+   in-slice; the rx bin calls it once per WAV (R1 is not a multi-symbol driver).
+   So M1 sees its own frequency — O1 suffices, no DSP analog of W0 needed for
+   demod. (The only DSP-side gap was the FEC-latency one above.)
+3. **R2 path bug** — `tux-rig-rts/src`/`tux-rig-cm108/src` don't exist as named;
+   real paths `tuxmodem/crates/tux-rig-*/src`. FIXED in v6.
+4. Holistic: totals 4+1+10+1 = 16 verified; no language-mix; no double-counted
+   finding; coverage airtight; H1/H8/M3 line-refs reconfirmed. Cosmetic
+   `process.rs` ledger wording left as-is (non-blocking).
+
+## Convergence summary (for operator review)
+
+| Round | Lens | Verdict | Headline outcome |
+|-------|------|---------|------------------|
+| 1 | sizing + DSP hot paths + cold batching | major rework | raw→production LOC; killed nonexistent frontend render loop; 22→16 |
+| 2 | independent hot-path re-derivation + tiering | minor-edits | wizard.rs gap; H1/H7; M3 demote; native_mailbox promote |
+| 3 | winlink family + cold internals + frontend | minor-edits | corrected false "MessageList non-virtualized"; H7 rerank |
+| 4 | partition DESIGN (cross-slice calibration) | **substantive** | lzhuf frequency-caller in cold sweep → W0 pre-artifact; R7 demote; H11 |
+| 5 | final gate + DSP/FEC analog | **GO** | FEC-latent reframing; O1 corrected; R2 paths |
+
+The R4 substantive defect is the proof the ≥5-round bar earned its keep: a
+hot-path-only review (rounds 1–3 converged "clean") would have shipped a
+mis-calibrated winlink audit. Final plan: **16 units + W0 pre-artifact**,
+execution order in `dev/perf-audit-scope-plan.md`.

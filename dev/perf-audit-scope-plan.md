@@ -4,6 +4,9 @@
 > ONE `performance-audit-cycle` run, collectively covering the whole repo.
 > Subject to a mandatory **≥5-round adversarial review** before any audit run
 > executes. See `dev/perf-audit-review-log.md` for the round-by-round record.
+>
+> **STATUS: v6 — FINAL / GO** (Round 5 final-gate verdict, 2026-06-04). Five
+> independent Opus rounds complete; plan is executable. Execution begins at M1.
 
 ## Revision history
 
@@ -32,7 +35,11 @@
   reduced→cold (no hot loop); new finding **H11** (`transfer.rs::read_block`
   per-byte `read_exact` loop); add a **verification-mode** flag for
   hardware-deferred slices; fix the lzhuf-driver attribution; narrow R2 to
-  timing-only. 17→16 units. **Round 5 pending.**
+  timing-only. 17→16 units.
+- **v6** (this, FINAL/GO) — Round 5 (Opus, final gate): **GO**. Verified all v5
+  fixes against source. Caught the **FEC-has-no-callers** reframing (M2's H2 is
+  latent until FEC is wired in; O1's RX chain corrected to current source) and
+  fixed R2's wrong crate paths. 16 units; no edits block M1.
 
 ## Slicing principles (v3)
 
@@ -54,7 +61,7 @@
 |---|-------|----------|------|-------|
 | H0 | OFDM per-symbol FFT **replanning** + per-symbol allocs | `tuxmodem-phy/.../receiver.rs::demodulate_one_symbol` (fresh `FftPlanner`/symbol, per-symbol `Vec`/`HashSet`/`Mapper`); `transmitter.rs::modulate_one_symbol` | Critical | M1 |
 | **H1** | **Per-subcarrier alloc in LLR/demod inner loop** | `constellations.rs::compute_llr:142` rebuilds `self.alphabet()` (up to 64 nested `map()` allocs) **per data subcarrier** at `receiver.rs:83`; `receiver.rs:78` ALSO allocates a fresh `Mapper::new` per subcarrier — nested alloc in the RX demod inner loop, worse than the per-symbol planner | Critical | M1 |
-| H2 | LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (`incoming` vecs inside the `max_iters` loop) | Critical | M2 |
+| H2 | LDPC sum-product decode, per-iteration `Vec` allocs | `tuxmodem-fec/src/decode.rs::Decoder::decode` (`incoming` vecs inside the `max_iters` loop). **LATENT:** `tuxmodem-fec` has NO in-tree callers (dep commented at `tuxmodem-phy/Cargo.toml:23`; live path uses hard-decision slicing in `decode_symbol_bytes`, bypassing FEC; "real FEC plugs in once #4 lands"). Reachability ≈ 0 in current build → intrinsic-cost finding, fires once FEC is wired in | Critical (latent) | M2 |
 | H3 | Frame-sync sliding cross-correlation | `tuxmodem-phy/src/sync/preamble.rs::scan` O(sig×template) | Major | M1 |
 | H4 | Real-time audio callback / ring buffer | `tuxmodem-phy/src/audio_device.rs` (CPAL stream; real-time deadline) | Major (deadline) | M1 |
 | H5 | Equalizer per-symbol alloc + interpolation | `ofdm_main/equalizer.rs::equalize` | Secondary | M1 |
@@ -105,10 +112,10 @@ the R2 report rather than over-claiming).
 | ID | Slice | Paths | Why full |
 |----|-------|-------|----------|
 | **M1** | OFDM PHY + real-time audio | entire `tuxmodem/crates/tuxmodem-phy/src` (ofdm_main/, sync/, equalizer, **constellations**, coded_modulation, robustness_floor/, subcarrier_snr, **audio_device.rs**, audio_io.rs, phy_api, modes) | Marquee FFT-replanning (H0), per-subcarrier alphabet rebuild (H1), narrow-FSK planner (H7), real-time deadline (H4) |
-| **M2** | FEC (LDPC) | `tuxmodem-fec/src` | Densest compute; per-iteration allocs (H2) |
+| **M2** | FEC (LDPC) | `tuxmodem-fec/src` | Densest compute; per-iteration allocs (H2). **Audit as intrinsic/latent** — no live caller yet (see H2); findings flagged "fires once FEC is wired in," reachability ≈ 0 today |
 | **M4** | Search backend | `src-tauri/src/search/` | SQLite FTS + `extractor.rs` substring/line loops (H6) |
 | **M5** | HF channel simulator | `hf-channel-sim/src` | Offline per-sample DSP; per-call FFT planners in `fading.rs`/`analysis.rs` (H9). **Down-ranked** below M4 (offline, no deadline) |
-| **O1** | **Live RX/TX pipeline overlay** (analysis, not a code slice) | reconcile M1+M2 per-symbol alloc budget (`audio_device`→`demodulate_one_symbol`→`compute_llr`→`Decoder::decode`) vs audio frame deadline; TX mirror | compounding end-to-end cost; run after M1 & M2 |
+| **O1** | **Live RX/TX pipeline overlay** (analysis, not a code slice) | reconcile the **current** live RX chain `audio_device`→`demodulate_one_symbol`→`compute_llr`→**`decode_symbol_bytes` (hard-decision slicing; FEC bypassed today)** vs audio frame deadline; TX mirror. Note the **latent** FEC stage (`Decoder::decode`) that will insert between LLR and bytes once wired in (`#4`) | compounding end-to-end cost; run after M1 & M2 |
 
 ### REDUCED-DEPTH cycle (lanes: algorithmic, memory/allocation, data-access, concurrency where threads exist; skip idiom-currency/payload/startup unless flagged)
 
@@ -116,7 +123,7 @@ the R2 report rather than over-claiming).
 |----|-------|-------|-------|
 | **M3** | ARDOP modem transport (**demoted from full**) | `winlink/modem/ardop/*` (transport.rs, session.rs, listener.rs, data.rs) | concrete target: per-byte `VecDeque<u8>` drain + `leftover.extend(payload)` moving whole message body byte-by-byte (`data.rs:104,145`); concurrency split-borrow hazard (`transport.rs:666`); socket I/O. DSP is external-TNC |
 | **R1** | Modem TX/RX CLI orchestration | `tuxmodem-tx/src` + `tuxmodem-rx/src` (2317 LOC; orchestration around the M1/M2 hot loops — WAV I/O, `run_transmission`, `compute_ber`) | I/O + buffer copies; **hardware-deferred** for run paths |
-| **R2** | Rig / PTT control (timing-only) | `tux-rig-rts/src` + `tux-rig-cm108/src` | `watchdog.rs:78` sleep-poll loop (no alloc concern); timing/latency only; **hardware-deferred** — measurement needs a rig |
+| **R2** | Rig / PTT control (timing-only) | `tuxmodem/crates/tux-rig-rts/src` + `tuxmodem/crates/tux-rig-cm108/src` | `watchdog.rs:78` sleep-poll loop (no alloc concern); timing/latency only; **hardware-deferred** — measurement needs a rig |
 | **R3** | Compression + B2F assembly | `winlink/lzhuf.rs`, `message.rs`, `compose.rs`, `proposal.rs`, `transfer.rs`, `wire.rs` | lzhuf (H10), per-byte `read_block` (H11); **driven by `winlink_backend.rs::build_outbound_proposals` (W0 context), NOT session.rs**; run AFTER R8 |
 | **R4** | VARA + shared modem | `winlink/modem/vara/*`, `modem/mod.rs`, `process.rs` (child-process mgmt; **shared seam with M3** — primary home here) | |
 | **R5** | AX.25 datalink | `winlink/ax25/` | framing/CRC |
