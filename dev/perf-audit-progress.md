@@ -22,7 +22,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 |-------|-------|
 | Scope partition + ≥5-round adversarial review | **DONE** — finalized at v6/GO (5 Opus rounds; see review-log) |
 | Execute audit units (per finalized plan) | IN PROGRESS — M1 full cycle DONE; M2 + M4 audits DONE; M5 + reduced + cold DEFERRED |
-| **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); in adversarial review (3 angle-rounds running). **Port-back to scarson/agent-skills required** (no write access this session). |
+| **Generalizable scope-slicing METHOD** (new operator ask, 2026-06-04) | written + committed (`.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md routing); FINAL (v3/SHIP — 5 review passes). **Port-back to scarson/agent-skills required** (no write access this session). |
 
 ## Status board — audit units (order per plan v2; may change after rounds 2–5)
 

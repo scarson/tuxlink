@@ -7,13 +7,14 @@
 ```
 1. Read THIS handoff. Then read dev/perf-audit-progress.md (resumable ledger)
    and dev/perf-audit-scope-plan.md (the FINAL/GO v6 partition).
-2. Two work products are in flight at session end:
-   - The generalizable scope-slicing METHOD (skill artifact) — its rounds 4-5
-     ship-gate reviews may have landed after this handoff was written; check
-     dev/perf-audit-reviews/method-round-{4,5}-*.md and apply any must-fix edits
-     to .claude/skills/performance-audit-cycle/whole-repo-scoping.md.
-   - The whole-repo perf audit: MUST-DO tier M1(full)/M2/M4 done; M5 + the
-     reduced tier (M3,R1-R10) + the cold sweep + the W0 pre-artifact are PENDING.
+2. The generalizable scope-slicing METHOD is FINAL (v3/SHIP — 5 review passes;
+   `.claude/skills/performance-audit-cycle/whole-repo-scoping.md` + SKILL.md
+   routing). Remaining work on it is the PORT-BACK only (step 3).
+3. The whole-repo perf audit is partially executed: MUST-DO tier M1 (full
+   cycle) / M2 / M4 done; **M5 + the reduced tier (M3,R1-R10) + the cold
+   sweep + the W0 pre-artifact are PENDING** — resume from
+   dev/perf-audit-progress.md (pick the first non-DONE unit, run 6 blind Opus
+   lanes, synthesize, commit).
 3. PORT-BACK (important): the scope-slicing method + the M1 plan improvements are
    in tuxlink's VENDORED skill copy only. To reach the operator's OTHER repos,
    port .claude/skills/performance-audit-cycle/{whole-repo-scoping.md,SKILL.md}
@@ -63,9 +64,8 @@
   adaptation, etc.).
 
 ## 3. What's PENDING / DEFERRED (resume via dev/perf-audit-progress.md)
-- **Method rounds 4-5 ship-gate**: apply any must-fix edits to v2; add the known
-  one-line data/ML (notebook/DAG-stage) caveat (flagged by gen-review §5, not yet
-  in v2).
+- **Method**: DONE (v3/SHIP). Only the **port-back to scarson/agent-skills** remains
+  (step 3 above) — no write access this session.
 - **W0 pre-artifact**: the winlink call-frequency map (read `winlink_backend.rs`
   loops) — REQUIRED before the winlink R-slices (R3/R8/R10). Cheap.
 - **Audit units not yet run** (order in the plan): M5 (hf-channel-sim; crate
