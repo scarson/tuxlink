@@ -46,7 +46,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 | R6 | REDUCED | winlink telnet/P2P transport | PENDING | |
 | R7 | ~~REDUCED~~ | winlink/listener gate | **FOLDED into SWEEP** (demoted v5 — no hot loop) | see cold sweep |
 | R8 | REDUCED | winlink B2F session driver | PENDING | |
-| R9 | REDUCED | src/radio + src/mailbox (warm UI) | PENDING | |
+| R9 | REDUCED | src/radio + src/mailbox (warm React/TS UI) | **AUDIT DONE** (reduced, 4 frontend lanes) | `docs/perf-audits/2026-06-04T17-00-r9-frontend-ui-*` (4 lanes+consolidated+kickoff). 7 findings (3M/4m). Headline: 4 Hz modem:status re-render cascade (whole ArdopRadioPanel + unbounded SessionLog re-projection) + per-keystroke Tauri invoke. Cleared: Virtuoso/memoized-sort/event-push (anti-padding). |
 | SWEEP | SWEEP | all cold Rust + cold/warm TS (see plan) | PENDING | |
 
 ## Decision log (substantive autonomous calls during execution)
