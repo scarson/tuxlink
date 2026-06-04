@@ -33,7 +33,7 @@ to know exactly where the autonomous perf-audit run stands and what to do next.
 |------|------|-------|-------|-----------|
 | M1 | FULL | tuxmodem-phy (OFDM + real-time audio) | **DONE (full cycle)** | audit: `docs/perf-audits/2026-06-04T14-24-m1-ofdm-phy-*` (6 lanes + consolidated + runs.jsonl + bug-hunt-kickoff); plan: `docs/plans/2026-06-04-m1-ofdm-phy-perf-audit-remediation-plan.md` (12 tasks, all P1–P12); plan-review: `dev/perf-audit-reviews/m1-plan-review.md` (needs-minor-edits → fixes applied). 13 findings (3C/6M/4m) + 3 suspected bugs. NOT executed (fix-plan is for operator-reviewed execution). |
 | M2 | FULL | tuxmodem-fec (LDPC) | AUDIT in synthesis (5/6 lanes done; idiom-currency pending); fix-plan DEFERRED (crate is latent/dead-code — low urgency) | `docs/perf-audits/2026-06-04T15-00-m2-fec-*` |
-| O1 | OVERLAY | live RX/TX pipeline (M1+M2) | PENDING | |
+| O1 | OVERLAY | live RX/TX pipeline (M1+M2) | **DONE** | `docs/perf-audits/2026-06-04-O1-live-pipeline-overlay.md` — per-symbol allocs are batch (not RT); only audio_device mutex is the RT-deadline item; sequence M2 SPA rewrite before FEC integration. |
 | M3 | FULL | winlink/modem/ardop | PENDING | |
 | M4 | FULL | src-tauri/src/search | **AUDIT DONE**; fix-plan DEFERRED | `docs/perf-audits/2026-06-04T15-30-m4-search-*` (6 lanes + consolidated + ledger + bug-hunt-kickoff). 10 findings (1C/5M/4m) + 6 bugs. |
 | M5 | FULL | hf-channel-sim | PENDING (DEFERRED — crate pre-built clean; DSP-similar to M1) | |
